@@ -1,6 +1,6 @@
 """
-integrations/notion_calendar.py
-────────────────────────────────
+integrations/calendar_notion/integration.py
+────────────────────────────────────────────
 Implementación completa de CalendarIntegration usando Notion.
 Soporta: consultar, crear, editar, eliminar eventos.
 Campos opcionales: hora, lugar, descripción.
@@ -11,7 +11,7 @@ from typing import Optional
 
 from notion_client import Client
 
-from core.data_integration import CalendarIntegration, CalendarEvent
+from integrations.base import CalendarIntegration, CalendarEvent
 
 logger = logging.getLogger(__name__)
 

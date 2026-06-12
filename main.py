@@ -3,13 +3,14 @@ main.py
 ────────
 Punto de entrada y raíz de composición (Composition Root).
 
-Aquí se ensamblan las piezas:
-  - Proveedor de IA        → NvidiaAIProvider  (intercambiable)
-  - Integración de datos   → NotionCalendar    (intercambiable)
-  - Procesador central     → MessageProcessor  (lógica de negocio)
-  - Plataforma             → TelegramBot       (intercambiable)
+Usa el sistema de plugins para cargar integraciones:
+  - Proveedor de IA        → load_plugin('ai')         (intercambiable)
+  - Integración de datos   → load_plugin('calendar')   (intercambiable)
+  - Plataforma             → load_plugin('platform')   (intercambiable)
+  - Procesador central     → MessageProcessor          (lógica de negocio)
 
-Para cambiar alguna pieza, solo modifica las líneas de construcción aquí.
+Para cambiar alguna pieza, modifica integrations/__init__.py DEFAULT_PLUGINS
+o usa config.yaml (si se implementa).
 """
 
 import logging
@@ -18,9 +19,7 @@ import os
 from dotenv import load_dotenv
 
 from core.processor import MessageProcessor
-from integrations.nvidia_ai import NvidiaAIProvider
-from integrations.notion_calendar import NotionCalendarIntegration
-from platforms.telegram_bot import TelegramBot
+from integrations import load_plugin
 
 # ─── Setup ────────────────────────────────────────────────────────────────────
 
@@ -44,36 +43,54 @@ def _load_env() -> dict:
     return {v: os.getenv(v) for v in REQUIRED_ENV_VARS}
 
 
-# ─── Composition Root ─────────────────────────────────────────────────────────
+# ─── Composition Root (usando plugins) ─────────────────────────────────────────
 
-def build_bot(env: dict) -> TelegramBot:
+def build_bot() -> "TelegramBot":
     """
-    Ensambla todas las dependencias.
-    Cambia aquí para usar otro proveedor de IA o integración.
+    Ensambla todas las dependencias usando el sistema de plugins.
+    
+    Flow:
+    1. Load AI provider plugin
+    2. Load calendar integration + directive plugin
+    3. Create processor with AI + directive
+    4. Create platform bot with processor
+    5. Return bot ready to run
     """
-    # Proveedor de IA (intercambiable: NvidiaAIProvider, OpenAIProvider, AnthropicProvider...)
-    ai = NvidiaAIProvider(api_key=env["NVIDIA_API_KEY"])
-
-    # Integración de datos (intercambiable: NotionCalendar, GoogleCalendar...)
-    calendar = NotionCalendarIntegration(
-        token=env["NOTION_TOKEN"],
-        database_id=env["DATABASE_ID"],
-        prop_titulo="Nombre",
-        prop_fecha="Fecha",
-    )
-
-    # Procesador central (agnóstico de plataforma e integración)
-    processor = MessageProcessor(ai=ai, calendar=calendar)
-
-    # Plataforma (intercambiable: TelegramBot, DiscordBot, WhatsAppBot...)
-    return TelegramBot(token=env["TELEGRAM_TOKEN"], processor=processor)
+    logger.info("🔌 Loading plugins...")
+    
+    # Load AI provider
+    logger.info("  - Loading AI provider...")
+    ai = load_plugin('ai')
+    
+    # Load calendar integration + directive
+    logger.info("  - Loading calendar integration...")
+    calendar_integration, calendar_directive = load_plugin('calendar')
+    
+    # Create processor (wires AI + directive together)
+    logger.info("  - Creating message processor...")
+    processor = MessageProcessor(ai=ai, directive=calendar_directive)
+    
+    # Load platform bot factory
+    logger.info("  - Loading platform bot...")
+    platform_factory = load_plugin('platform')
+    
+    # Instantiate bot with processor
+    if callable(platform_factory):
+        # If factory returns a lambda, call it with processor
+        bot = platform_factory(processor)
+    else:
+        # If factory returns bot directly, use it as is
+        bot = platform_factory
+    
+    logger.info("✅ All plugins loaded successfully")
+    return bot
 
 
 # ─── Entrada ──────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    env = _load_env()
-    bot = build_bot(env)
+    _load_env()  # Validate env vars exist
+    bot = build_bot()
     bot.run()
 
 

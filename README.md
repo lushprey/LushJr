@@ -1,88 +1,90 @@
-# LushJr Bot — Arquitectura Modular
+# LushJr_bot
 
-Bot de Telegram con IA + Calendario Notion, diseñado para ser **fácilmente intercambiable** en cada capa.
+_Auto-generated README - Last updated: 2026-06-12 09:57:42_
 
-## Estructura
+## Overview
+
+Telegram bot with AI integration and calendar management.
+
+## Project Structure
 
 ```
 LushJr_bot/
-├── main.py                          ← Composition Root (ensambla todo)
-│
-├── core/                            ← Lógica de negocio (sin dependencias externas)
-│   ├── ai_provider.py               ← Interfaz abstracta de IA
-│   ├── data_integration.py          ← Interfaz abstracta de datos
-│   └── processor.py                 ← Pipeline central (orquestador)
-│
-├── integrations/                    ← Implementaciones concretas
-│   ├── nvidia_ai.py                 ← IA: Nvidia NIM (compatible OpenAI)
-│   ├── notion_calendar.py           ← Calendario: Notion
-│   ├── notion_actions.py            ← Acciones atómicas de Notion
-│   ├── notion_actions_registry.py   ← Decorador @action y registro
-│   ├── notion_executor.py           ← Ejecutor genérico de acciones
-│   └── notion_introspection.py      ← Descubrimiento de schemas
-│
-└── platforms/
-    └── telegram_bot.py              ← Plataforma: Telegram
+├── core/
+│   ├── __init__.py
+│   ├── ai_provider.py
+│   ├── data_integration.py
+│   └── processor.py
+├── integrations/
+│   ├── __init__.py
+│   ├── notion_calendar.py
+│   └── nvidia_ai.py
+├── main.py
+├── platforms/
+│   └── telegram_bot.py
+├── README.md
+├── readme_agent.py
+└── requirements.txt
 ```
 
-## Flujo de un mensaje
+## Components
+
+### Core
+
+- **__init__.py**
+
+- **ai_provider.py**
+
+- **data_integration.py**
+
+- **processor.py**
+
+
+### Integrations
+
+- **__init__.py**
+
+- **notion_calendar.py**
+
+- **nvidia_ai.py**
+
+
+### Platforms
+
+- **telegram_bot.py**
+
+
+### Root
+
+- **main.py**
+ — main.py
+
+- **readme_agent.py**
+ — readme_agent.py
+
+
+## Dependencies
 
 ```
-Usuario → Telegram → TelegramBot
-                         ↓
-                    MessageProcessor
-                    ┌────┴────┐
-                 AIProvider  CalendarIntegration
-                 (Nvidia)    (Notion)
+python-telegram-bot==21.3
+openai==1.42.0
+httpx==0.27.2
+notion-client==2.2.1
+python-dotenv==1.0.0
 ```
 
-## Cómo cambiar una pieza
-
-### Cambiar proveedor de IA (Nvidia → Anthropic)
-```python
-# integrations/anthropic_ai.py
-class AnthropicAIProvider(AIProvider):
-    def detect_intent(self, message, context): ...
-    def chat(self, message, system_prompt): ...
-
-# main.py — solo cambias esta línea:
-ai = AnthropicAIProvider(api_key=env["ANTHROPIC_API_KEY"])
-```
-
-### Cambiar integración de datos (Notion → Google Calendar)
-```python
-# integrations/google_calendar.py
-class GoogleCalendarIntegration(CalendarIntegration):
-    def query_events(self, date_start, date_end): ...
-    def create_event(self, title, date_start, date_end=None): ...
-
-# main.py — solo cambias esta línea:
-calendar = GoogleCalendarIntegration(credentials=env["GOOGLE_CREDS"])
-```
-
-### Cambiar plataforma (Telegram → Discord)
-```python
-# platforms/discord_bot.py
-class DiscordBot:
-    def __init__(self, token: str, processor: MessageProcessor): ...
-    def run(self): ...
-
-# main.py — solo cambias esta línea:
-bot = DiscordBot(token=env["DISCORD_TOKEN"], processor=processor)
-```
-
-## Variables de entorno
-
-```env
-TELEGRAM_TOKEN=...
-NVIDIA_API_KEY=...
-NOTION_TOKEN=...
-DATABASE_ID=...
-```
-
-## Comandos
+## Quick Start
 
 ```bash
-pip install python-telegram-bot openai notion-client python-dotenv
+pip install -r requirements.txt
 python main.py
 ```
+
+## Configuration
+
+Set up the following environment variables in a `.env` file:
+
+- `TELEGRAM_TOKEN`
+- `NVIDIA_API_KEY`
+- `NOTION_TOKEN`
+- `DATABASE_ID`

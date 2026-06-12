@@ -1,11 +1,8 @@
 """
-platforms/telegram_bot.py
-──────────────────────────
-Capa de Telegram. Solo maneja I/O con la API de Telegram.
-No contiene lógica de negocio — delega todo al MessageProcessor.
-
-Para agregar Discord, WhatsApp, etc.: crea discord_bot.py o whatsapp_bot.py
-que usen el mismo MessageProcessor.
+integrations/platform_telegram/bot.py
+─────────────────────────────────────
+Telegram platform bot implementation.
+Handles all Telegram-specific I/O.
 """
 import asyncio
 import logging
@@ -16,12 +13,13 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 from telegram.request import HTTPXRequest
 
 from core.processor import MessageProcessor
+from integrations.base import PlatformBot
 
 logger = logging.getLogger(__name__)
 
 
-class TelegramBot:
-    """Bot de Telegram. Solo sabe de Telegram y MessageProcessor."""
+class TelegramBot(PlatformBot):
+    """Telegram bot implementation."""
 
     def __init__(self, token: str, processor: MessageProcessor):
         self.token = token
@@ -29,6 +27,7 @@ class TelegramBot:
         self._app = self._build_app()
 
     def run(self) -> None:
+        """Start the Telegram bot."""
         logger.info("🤖 Bot iniciado — modo lenguaje natural")
         self._app.run_polling(
             allowed_updates=Update.ALL_TYPES,
@@ -36,7 +35,7 @@ class TelegramBot:
             bootstrap_retries=5,
         )
 
-    # ── Construcción de la app ───────────────────────────────────────────────
+    # ── App builder ──────────────────────────────────────────────────────────
 
     def _build_app(self) -> Application:
         request = HTTPXRequest(
@@ -55,7 +54,7 @@ class TelegramBot:
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message))
         return app
 
-    # ── Handler ──────────────────────────────────────────────────────────────
+    # ── Message handler ──────────────────────────────────────────────────────
 
     async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = update.message.text
@@ -74,7 +73,7 @@ class TelegramBot:
             logger.exception("Error inesperado procesando mensaje")
             response = f"❌ Algo salió mal: {e}"
 
-        # Telegram: máx 4096 chars por mensaje
+        # Telegram: máx 4096 chars per message
         for chunk in range(0, len(response), 4096):
             await update.message.reply_text(
                 response[chunk : chunk + 4096],
