@@ -47,7 +47,7 @@ Available tools:
 For the "chat" tool, include a "response" key in params with your direct reply to the user (in the same language the user wrote).
 When reciving a message that doesn't match calendar-related questions, use the "chat" tool with an appropriate response.
 When reciving calendar-related questions, choose the most appropriate tool and fill params accordingly.
-When reciving the result of a tool execution that returns raw data (like a list of events), use the "chat" tool to post-process that data into a user-friendly message.s
+When reciving the result of a tool execution that returns raw data (like a list of events), use the "chat" tool to post-process that data into a user-friendly message.
 Return ONLY the JSON, no markdown, no extra text.
 """
 
@@ -81,7 +81,7 @@ class NvidiaAIProvider(AIProvider):
         today = datetime.now()
         today_str = today.strftime("%Y-%m-%d")
 
-        cache_key = (today_str, id(directive_prompt))
+        cache_key = (today_str, directive_prompt)
         if cache_key in self._prompt_cache:
             return self._prompt_cache[cache_key]
 

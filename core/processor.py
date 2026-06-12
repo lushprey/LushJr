@@ -10,8 +10,8 @@ from integrations.base import AIProvider, Directive
 
 logger = logging.getLogger(__name__)
 
-# Tools que NO necesitan post-proceso con IA (su resultado ya es texto listo)
-_PASSTHROUGH_TOOLS = {"chat"}
+# Tools whose output is already a user-ready message — no AI post-processing needed
+_PASSTHROUGH_TOOLS = {"chat", "create_event", "update_event", "delete_event"}
 
 
 class MessageProcessor:
@@ -40,7 +40,8 @@ class MessageProcessor:
 
             # chat: respuesta directa sin tool externa
             if tool_call.tool_name == "chat":
-                respuesta = tool_call.params.get("respuesta")
+                # AI is instructed to use "response" key (not "respuesta")
+                respuesta = tool_call.params.get("response") or tool_call.params.get("respuesta")
                 if respuesta:
                     return respuesta  # ya viene en el JSON — 0 llamadas extra
                 return self.ai.chat(message, system_prompt)
@@ -60,7 +61,9 @@ class MessageProcessor:
                 logger.warning(f"Tool falló: {r_message}")
                 return r_message
 
-            # Post-proceso: solo si el resultado es datos crudos 
+            # Post-proceso: solo para tools que devuelven datos crudos (ej: query_events)
+            if tool_call.tool_name in _PASSTHROUGH_TOOLS:
+                return r_message
             return self.ai.chat(r_message, system_prompt)
 
         except Exception as e:

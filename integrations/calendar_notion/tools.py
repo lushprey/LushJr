@@ -275,15 +275,16 @@ class DeleteEventToolNotion(Tool):
     def execute(self, params: Dict[str, Any]) -> list[str | bool]:
         try:
             event_id = params.get("event_id")
-            
+
             if not event_id:
-                return [f"❌ Error: event_id is required", False]
-            
-            self.calendar.delete_event(event_id=event_id)
-            return [f"✅ Event deleted successfully", True]
+                return ["❌ Error: event_id is required", False]
+
+            date = params.get("date")
+            self.calendar.delete_event(event_id=event_id, date=date)
+            return ["✅ Event deleted successfully", True]
         except Exception as e:
             logger.error(f"Error deleting event: {e}")
-            return [f"❌ Error deleting event: {str(e)}", False]
+            return [f"❌ Error deleting event: {e}", False]
 
 
 class ChatTool(Tool):
@@ -309,4 +310,3 @@ class ChatTool(Tool):
         # This tool is used when the user's message doesn't match calendar tools
         # The actual message should be available from the context
         return ["Chat response ready (message context required)", True]
-
