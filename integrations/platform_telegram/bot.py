@@ -1,12 +1,12 @@
 """
 integrations/platform_telegram/bot.py
 ─────────────────────────────────────
-OPTIMIZADO: typing indicator persistente + executor con más workers.
+Telegram platform bot implementation.
+Handles all Telegram-specific I/O.
 """
 import asyncio
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor
 
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
@@ -17,11 +17,9 @@ from integrations.base import PlatformBot
 
 logger = logging.getLogger(__name__)
 
-# Executor dedicado para no bloquear el event loop de Telegram
-_executor = ThreadPoolExecutor(max_workers=4)
-
 
 class TelegramBot(PlatformBot):
+    """Telegram bot implementation."""
 
     def __init__(self, token: str, processor: MessageProcessor):
         self.token = token
@@ -29,12 +27,15 @@ class TelegramBot(PlatformBot):
         self._app = self._build_app()
 
     def run(self) -> None:
-        logger.info("🤖 Bot iniciado")
+        """Start the Telegram bot."""
+        logger.info("🤖 Bot iniciado — modo lenguaje natural")
         self._app.run_polling(
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=True,
             bootstrap_retries=5,
         )
+
+    # ── App builder ──────────────────────────────────────────────────────────
 
     def _build_app(self) -> Application:
         request = HTTPXRequest(
@@ -53,37 +54,28 @@ class TelegramBot(PlatformBot):
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message))
         return app
 
-    async def _keep_typing(self, update: Update, stop_event: asyncio.Event) -> None:
-        """Reenvía 'typing' cada 4s para que no desaparezca mientras la IA procesa."""
-        while not stop_event.is_set():
-            try:
-                await update.message.chat.send_action("typing")
-            except Exception:
-                pass
-            await asyncio.sleep(4)
+    # ── Message handler ──────────────────────────────────────────────────────
 
     async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = update.message.text
         user = update.effective_user.first_name if update.effective_user else "?"
         logger.info(f"[{user}] {text!r}")
 
-        stop_typing = asyncio.Event()
-        typing_task = asyncio.create_task(self._keep_typing(update, stop_typing))
-
         try:
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                _executor, self.processor.process, text
-            )
+            await update.message.chat.send_action("typing")
+        except Exception as e:
+            logger.warning(f"No se pudo enviar 'typing': {e}")
+
+        loop = asyncio.get_event_loop()
+        try:
+            response = await loop.run_in_executor(None, self.processor.process, text)
         except Exception as e:
             logger.exception("Error inesperado procesando mensaje")
             response = f"❌ Algo salió mal: {e}"
-        finally:
-            stop_typing.set()
-            typing_task.cancel()
 
-        for i in range(0, len(response), 4096):
+        # Telegram: máx 4096 chars per message
+        for chunk in range(0, len(response), 4096):
             await update.message.reply_text(
-                response[i : i + 4096],
+                response[chunk : chunk + 4096],
                 parse_mode="Markdown",
             )
