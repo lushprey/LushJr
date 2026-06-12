@@ -52,7 +52,7 @@ Reglas:
 
 class NvidiaAIProvider(AIProvider):
 
-    def __init__(self, api_key: str, model: str = "meta/llama-3.3-70b-instruct"):
+    def __init__(self, api_key: str, model: str = "meta/llama-3.3-8b-instruct"):
         self.client = OpenAI(
             base_url="https://integrate.api.nvidia.com/v1",
             api_key=api_key,
