@@ -92,8 +92,6 @@ class NotionCalendarIntegration(CalendarIntegration):
         location: Optional[str] = None,
         description: Optional[str] = None,
     ) -> CalendarEvent:
-        # Resolve name → UUID if needed
-        event_id = self.resolve_event_id(event_id, date=date_start)
         # Obtiene el evento actual para no perder campos no mencionados
         current = self.notion.pages.retrieve(page_id=event_id)
         current_event = self._to_event(current)
@@ -110,65 +108,9 @@ class NotionCalendarIntegration(CalendarIntegration):
         page = self.notion.pages.update(page_id=event_id, properties=properties)
         return self._to_event(page)
 
-    def resolve_event_id(self, event_id: str, date: Optional[str] = None) -> str:
-        """
-        Resolves a human-readable event name to a Notion page UUID.
-        If event_id is already a valid UUID, returns it as-is.
-        Otherwise, searches by title (optionally filtered by date).
-        Raises ValueError if no matching event is found.
-        """
-        import re
-        UUID_RE = re.compile(
-            r"^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$",
-            re.IGNORECASE,
-        )
-        if UUID_RE.match(event_id.strip()):
-            return event_id.strip()
-
-        # Build filter: title contains the event_id string
-        title_filter: dict = {
-            "property": self.prop_titulo,
-            "title": {"contains": event_id},
-        }
-
-        if date:
-            query_filter: dict = {
-                "and": [
-                    title_filter,
-                    {"property": self.prop_fecha, "date": {"equals": date}},
-                ]
-            }
-        else:
-            query_filter = title_filter
-
-        response = self.notion.databases.query(
-            database_id=self.database_id,
-            filter=query_filter,
-            sorts=[{"property": self.prop_fecha, "direction": "ascending"}],
-        )
-        results = response.get("results", [])
-        if not results:
-            raise ValueError(
-                f"No event found matching title '{event_id}'"
-                + (f" on {date}" if date else "")
-            )
-        if len(results) > 1:
-            titles = ", ".join(
-                (r.get("properties", {}).get(self.prop_titulo, {}).get("title", [{}])[0].get("plain_text", "?"))
-                for r in results
-            )
-            raise ValueError(
-                f"Multiple events match '{event_id}': {titles}. "
-                "Please be more specific."
-            )
-        return results[0]["id"]
-
-    def delete_event(self, event_id: str, date: Optional[str] = None) -> None:
-        """Archiva la página (equivalente a eliminar en Notion).
-        Accepts either a Notion page UUID or a human-readable event title.
-        """
-        page_id = self.resolve_event_id(event_id, date=date)
-        self.notion.pages.update(page_id=page_id, archived=True)
+    def delete_event(self, event_id: str) -> None:
+        """Archiva la página (equivalente a eliminar en Notion)."""
+        self.notion.pages.update(page_id=event_id, archived=True)
 
     # ── Construcción de propiedades ─────────────────────────────────────────
 

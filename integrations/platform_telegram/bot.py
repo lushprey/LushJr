@@ -6,7 +6,6 @@ OPTIMIZADO: typing indicator persistente + executor con más workers.
 import asyncio
 import logging
 import os
-import re
 from concurrent.futures import ThreadPoolExecutor
 
 from telegram import Update
@@ -20,27 +19,6 @@ logger = logging.getLogger(__name__)
 
 # Executor dedicado para no bloquear el event loop de Telegram
 _executor = ThreadPoolExecutor(max_workers=4)
-
-# Characters that must be escaped in MarkdownV2
-_MDV2_ESCAPE = re.compile(r'([_*\[\]()~`>#+=|{}.!\\-])')
-
-
-def _safe_markdown(text: str) -> tuple[str, str]:
-    """
-    Try to use Markdown first.  If the text contains unmatched entities
-    (backticks, asterisks, underscores) fall back to plain text so
-    Telegram never raises BadRequest: Can't parse entities.
-
-    Returns (text_to_send, parse_mode_or_empty).
-    """
-    # Heuristic: count backtick pairs. Odd count → broken inline code.
-    if text.count("`") % 2 != 0:
-        # Strip all backticks and send plain
-        return text.replace("`", "'"), ""
-    # Count unmatched bold/italic markers
-    if text.count("*") % 2 != 0 or text.count("_") % 2 != 0:
-        return text.replace("*", "").replace("_", ""), ""
-    return text, "Markdown"
 
 
 class TelegramBot(PlatformBot):
@@ -73,17 +51,7 @@ class TelegramBot(PlatformBot):
             .build()
         )
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message))
-        app.add_error_handler(self._on_error)
         return app
-
-    async def _on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Global error handler — logs the exception and notifies the user if possible."""
-        logger.error("Unhandled exception", exc_info=context.error)
-        if isinstance(update, Update) and update.message:
-            try:
-                await update.message.reply_text("❌ Ocurrió un error inesperado. Por favor intenta de nuevo.")
-            except Exception:
-                pass
 
     async def _keep_typing(self, update: Update, stop_event: asyncio.Event) -> None:
         """Reenvía 'typing' cada 4s para que no desaparezca mientras la IA procesa."""
@@ -115,7 +83,7 @@ class TelegramBot(PlatformBot):
             typing_task.cancel()
 
         for i in range(0, len(response), 4096):
-            chunk = response[i : i + 4096]
-            safe_text, parse_mode = _safe_markdown(chunk)
-            kwargs = {"parse_mode": parse_mode} if parse_mode else {}
-            await update.message.reply_text(safe_text, **kwargs)
+            await update.message.reply_text(
+                response[i : i + 4096],
+                parse_mode="Markdown",
+            )
