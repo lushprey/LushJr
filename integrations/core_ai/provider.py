@@ -1,165 +1,193 @@
 """
 integrations/core_ai/provider.py
 ─────────────────────────────────
+AI provider backed by Nvidia's OpenAI-compatible API.
+
+Swap this file (or create a parallel one) to use a different model
+provider — just implement AIProvider from integrations.base.
+
+Multi-tool support
+------------------
+choose_tools() first attempts native function-calling (faster, more
+reliable). If the API doesn't support it, it falls back to asking the
+model to return JSON directly.  Either way, it may return *multiple*
+ToolCall objects so the processor can chain actions automatically.
 """
+from __future__ import annotations
+
 import json
 import logging
-from typing import List
+from datetime import datetime
+from typing import Any
 
 from openai import OpenAI
 
-from core.prompts import (
-    render_intent_system,
-    render_chat_system,
-    render_tool_selection_fallback,
-)
-from integrations.base import AIProvider, IntentResult, Tool, ToolCall
+from integrations.base import AIProvider, Tool, ToolCall
 
 logger = logging.getLogger(__name__)
 
 
 class NvidiaAIProvider(AIProvider):
+    """
+    AIProvider that uses Nvidia's OpenAI-compatible inference endpoint.
 
-    def __init__(self, api_key: str, model: str = "meta/llama-3.1-8b-instruct"):
-        self.client = OpenAI(
-            base_url="https://integrate.api.nvidia.com/v1",
-            api_key=api_key,
-        )
-        self.model = model
+    Parameters
+    ----------
+    api_key : NVIDIA_API_KEY
+    model   : model slug, default "meta/llama-3.3-70b-instruct"
+    """
 
-    # ── Public interface ─────────────────────────────────────────────────────
+    BASE_URL = "https://integrate.api.nvidia.com/v1"
 
-    def detect_intent(self, message: str, context: dict) -> IntentResult:
-        """Legacy method for backward compatibility. Prompt comes from core/prompts.py."""
-        system_prompt = render_intent_system(
-            fecha_hoy=context.get("fecha_hoy"),
-            dia_semana=context.get("dia_semana"),
-        )
+    def __init__(self, api_key: str, model: str = "meta/llama-3.3-70b-instruct") -> None:
+        self.client = OpenAI(base_url=self.BASE_URL, api_key=api_key)
+        self.model  = model
 
-        completion = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": message},
-            ],
-            temperature=0.2,
-            max_tokens=300,
-        )
-
-        raw = completion.choices[0].message.content.strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        data = json.loads(raw)
-        return IntentResult.from_dict(data)
+    # ──────────────────────────────────────────────────────────────────────
+    # AIProvider interface
+    # ──────────────────────────────────────────────────────────────────────
 
     def chat(self, message: str, system_prompt: str) -> str:
-        """
-        Generate freeform chat response.
-
-        The caller (usually MessageProcessor) passes the system prompt.
-        For general chat not tied to a directive, render_chat_system() is used.
-        """
+        """Return a free-form text reply."""
         completion = self.client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": message},
+                {"role": "system",  "content": system_prompt},
+                {"role": "user",    "content": message},
             ],
             temperature=0.7,
             max_tokens=1024,
         )
         return completion.choices[0].message.content.strip()
 
-    def call_with_tools(
+    def choose_tools(
         self,
-        message: str,
-        tools: List[Tool],
+        message:       str,
+        tools:         list[Tool],
         system_prompt: str,
-    ) -> ToolCall:
+    ) -> list[ToolCall]:
         """
-        Call AI with available tools and return a structured ToolCall.
+        Ask the model which tool(s) to call for this message.
 
-        The system_prompt comes from the directive (which builds it via core/prompts.py).
-        The tool-selection fallback prompt also comes from core/prompts.py.
+        Returns a list so the processor can chain multiple actions
+        (e.g. the user asks to delete 5 events → 5 delete_event calls).
+
+        Falls back to JSON parsing if function-calling is unavailable.
         """
-        functions = self._build_function_schemas(tools)
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": message},
-        ]
+        functions = [self._tool_to_function(t) for t in tools]
 
-        # Try native function calling first
+        # ── Attempt native function calling ─────────────────────────────
         try:
             completion = self.client.chat.completions.create(
                 model=self.model,
-                messages=messages,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": message},
+                ],
                 functions=functions,
                 temperature=0.2,
-                max_tokens=500,
+                max_tokens=800,
             )
-            response_message = completion.choices[0].message
-            if response_message.function_call:
-                tool_name = response_message.function_call.name
-                params = json.loads(response_message.function_call.arguments)
-                return ToolCall(tool_name=tool_name, params=params)
-        except Exception as e:
-            logger.warning(f"Function calling failed: {e}. Falling back to JSON parsing.")
+            msg = completion.choices[0].message
+            if msg.function_call:
+                name   = msg.function_call.name
+                params = json.loads(msg.function_call.arguments or "{}")
+                return [ToolCall(tool_name=name, params=params)]
 
-        # Fallback: JSON-mode tool selection (prompt built from core/prompts.py)
-        return self._call_with_json_fallback(message, tools, system_prompt)
+        except Exception as exc:
+            logger.warning("Function calling unavailable (%s), using JSON fallback.", exc)
 
-    # ── Private helpers ──────────────────────────────────────────────────────
+        # ── JSON fallback ────────────────────────────────────────────────
+        return self._choose_tools_json(message, tools, system_prompt)
 
-    def _build_function_schemas(self, tools: List[Tool]) -> list:
-        return [
-            {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        param: {"type": "string"}
-                        for param in tool.required_params
-                    },
-                    "required": tool.required_params,
-                },
+    # ──────────────────────────────────────────────────────────────────────
+    # Private helpers
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _tool_to_function(self, tool: Tool) -> dict:
+        """Convert a Tool into an OpenAI function-calling schema."""
+        properties: dict[str, Any] = {}
+        for param_name, meta in tool.params.items():
+            properties[param_name] = {
+                "type":        meta.get("type", "string"),
+                "description": meta.get("description", ""),
             }
-            for tool in tools
-        ]
+        return {
+            "name":        tool.name,
+            "description": tool.description,
+            "parameters": {
+                "type":       "object",
+                "properties": properties,
+                "required":   tool.required_params,
+            },
+        }
 
-    def _call_with_json_fallback(
-        self, message: str, tools: List[Tool], base_system: str
-    ) -> ToolCall:
-        """Ask the AI to return a JSON tool-selection object."""
-        tool_descriptions = "\n".join(
-            f"- {t.name}: {t.description} (params: {', '.join(t.required_params)})"
+    def _choose_tools_json(
+        self,
+        message:       str,
+        tools:         list[Tool],
+        system_prompt: str,
+    ) -> list[ToolCall]:
+        """
+        Fallback: ask the model to emit JSON describing one or more tool calls.
+
+        The model is instructed to return an array, enabling chained actions.
+        """
+        today      = datetime.now().strftime("%Y-%m-%d")
+        day_name   = datetime.now().strftime("%A")
+        tool_lines = "\n".join(
+            f"  - {t.name}: {t.description}  "
+            f"(required: {t.required_params}, optional: {t.optional_params})"
             for t in tools
         )
-        fallback_prompt = render_tool_selection_fallback(tool_descriptions, base_system)
+
+        fallback_system = (
+            f"{system_prompt}\n\n"
+            f"Today is {today} ({day_name}).\n\n"
+            "Available tools:\n"
+            f"{tool_lines}\n\n"
+            "Respond with ONLY a JSON array of tool calls.  "
+            "You may include multiple entries when the request requires "
+            "chained actions (e.g. deleting several events).  "
+            "Use the 'chat' tool when no calendar action is needed.\n\n"
+            "Format:\n"
+            '[\n'
+            '  {"tool": "tool_name", "params": {"key": "value"}},\n'
+            '  ...\n'
+            ']'
+        )
 
         completion = self.client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": fallback_prompt},
-                {"role": "user", "content": message},
+                {"role": "system", "content": fallback_system},
+                {"role": "user",   "content": message},
             ],
             temperature=0.2,
-            max_tokens=500,
+            max_tokens=800,
         )
 
-        raw = completion.choices[0].message.content or ""
-        raw = raw.strip().replace("```json", "").replace("```", "").strip()
+        raw = (completion.choices[0].message.content or "").strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
 
         if not raw:
-            logger.warning("AI returned empty response, defaulting to chat tool")
-            return ToolCall(tool_name="chat", params={})
+            logger.warning("AI returned empty response — defaulting to chat.")
+            return [ToolCall(tool_name="chat", params={})]
 
         try:
             data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse JSON response '{raw}': {e}. Defaulting to chat.")
-            return ToolCall(tool_name="chat", params={})
+        except json.JSONDecodeError:
+            logger.warning("Could not parse AI JSON %r — defaulting to chat.", raw)
+            return [ToolCall(tool_name="chat", params={})]
 
-        return ToolCall(
-            tool_name=data.get("tool", "chat"),
-            params=data.get("params", {}),
-        )
+        # Accept both a single object and an array
+        if isinstance(data, dict):
+            data = [data]
+
+        calls: list[ToolCall] = []
+        for item in data:
+            name   = item.get("tool", "chat")
+            params = item.get("params", {})
+            calls.append(ToolCall(tool_name=name, params=params))
+
+        return calls or [ToolCall(tool_name="chat", params={})]

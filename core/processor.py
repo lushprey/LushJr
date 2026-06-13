@@ -1,71 +1,91 @@
 """
 core/processor.py
-──────────────────
+─────────────────
+Central message processor.
 
-Now uses a tool-driven architecture where:
-1. Directive provides available tools
-2. AI chooses which tool to use
-3. Processor executes the tool
-4. Result is returned to user
+Flow
+----
+1. Ask the AI which tool(s) to call (may be multiple for chained actions).
+2. Execute each tool in sequence.
+3. If all tools succeeded, post-process the combined result with the AI
+   for a polished, natural-language reply.
+4. On any tool failure, return the error immediately.
+
+To swap the AI or directive, change what you pass into __init__.
+This class is intentionally generic — it knows nothing about calendars,
+Telegram, or any specific integration.
 """
-import logging
+from __future__ import annotations
 
-from integrations.base import AIProvider, Directive
+import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from integrations.base import AIProvider, Directive
 
 logger = logging.getLogger(__name__)
 
 
 class MessageProcessor:
+    """
+    Wires an AIProvider and a Directive together.
 
-    def __init__(self, ai: AIProvider, directive: Directive):
-        self.ai = ai
+    Parameters
+    ----------
+    ai        : Any AIProvider implementation.
+    directive : Any Directive implementation (provides tools + system prompt).
+    """
+
+    def __init__(self, ai: "AIProvider", directive: "Directive") -> None:
+        self.ai        = ai
         self.directive = directive
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Public API
+    # ──────────────────────────────────────────────────────────────────────
 
     def process(self, message: str) -> str:
         """
-        Process user message using directive tools and AI.
-        
-        Flow:
-        1. Get available tools from directive
-        2. Call AI with tools and system prompt
-        3. Execute chosen tool
-        4. Return result
-        """
-        try:
-            # Get available tools and system prompt from directive
-            tools = self.directive.get_tools()
-            system_prompt = self.directive.get_system_prompt()
-            
-            # Call AI with tools (AI chooses which tool to use)
-            logger.info(f"Processing: {message}")
-            tool_call = self.ai.call_with_tools(message, tools, system_prompt)
-            logger.info(f"Tool chosen: {tool_call.tool_name} with params: {tool_call.params}")
-            
-            # Handle chat tool specially - use the AI's chat method
-            if tool_call.tool_name == "chat":
-                result = self.ai.chat(message, system_prompt)
-                logger.info(f"Chat result: {result}")
-                return result
-            
-            # Find the tool by name
-            tool = next((t for t in tools if t.name == tool_call.tool_name), None)
-            if tool is None:
-                logger.warning(f"Tool not found: {tool_call.tool_name}")
-                return f"❌ Tool not found: {tool_call.tool_name}"
-            
-            # Execute the tool
-            result = tool.execute(tool_call.params)
-            r_message = next((x for x in result if isinstance(x, str)), "")
-            success = next((x for x in result if isinstance(x, bool)), False)
+        Process a user message and return a reply string.
 
-            logger.info(f"Tool result: {r_message}")
-            if success is False:
-                logger.warning(f"Tool execution failed: {r_message}")
-                return r_message
-            result = self.ai.chat(r_message, system_prompt)  # Post-process tool response with AI for better formatting
-            logger.info(f"Final response: {result}")
-            return result
-            
-        except Exception as e:
-            logger.exception(f"Error processing message: {e}")
-            return f"❌ Error: {str(e)}"
+        Supports chained tool calls: the AI can choose more than one tool
+        (e.g. deleting multiple events) and all are executed in order.
+        """
+        tools         = self.directive.tools()
+        system_prompt = self.directive.system_prompt()
+        tool_map      = {t.name: t for t in tools}
+
+        logger.info("Processing: %r", message)
+
+        # 1. Ask the AI which tool(s) to use
+        calls = self.ai.choose_tools(message, tools, system_prompt)
+        logger.info("Tool calls chosen: %s", [(c.tool_name, c.params) for c in calls])
+
+        # 2. Handle pure-chat (no tool needed)
+        if len(calls) == 1 and calls[0].tool_name == "chat":
+            return self.ai.chat(message, system_prompt)
+
+        # 3. Execute each tool and collect results
+        results: list[str] = []
+        for call in calls:
+            if call.tool_name == "chat":
+                # Mixed chain: a chat step inside a multi-action sequence
+                results.append(self.ai.chat(message, system_prompt))
+                continue
+
+            tool = tool_map.get(call.tool_name)
+            if tool is None:
+                logger.warning("Unknown tool requested: %s", call.tool_name)
+                return f"❌ Unknown tool: {call.tool_name}"
+
+            result = tool.execute(call.params)
+            logger.info("Tool %r → success=%s  message=%r", call.tool_name, result.success, result.message)
+
+            if not result.success:
+                return result.message          # Fail fast on first error
+
+            results.append(result.message)
+
+        # 4. Post-process combined output with AI for a natural reply
+        combined = "\n".join(results)
+        return self.ai.chat(combined, system_prompt)
