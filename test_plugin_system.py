@@ -11,6 +11,7 @@ Tests:
   4. Processor chains multiple tool calls correctly.
   5. Date resolver handles relative keywords.
   6. Plugin loader resolves factories (no credentials needed).
+  7. Config loader and plugin registry work with the new configuration system.
 """
 from __future__ import annotations
 
@@ -20,15 +21,15 @@ from typing import Any
 from unittest.mock import MagicMock
 
 
-PASS = "  ✅"
-FAIL = "  ❌"
-WARN = "  ⚠️ "
+PASS = "  [OK]"
+FAIL = "  [FAIL]"
+WARN = "  [WARN]"
 
 
 def section(title: str) -> None:
-    print(f"\n{'─'*60}")
+    print(f"\n{'-'*60}")
     print(f"  {title}")
-    print(f"{'─'*60}")
+    print(f"{'-'*60}")
 
 
 def ok(msg: str) -> None:
@@ -126,7 +127,7 @@ ok("Tool.required_params / optional_params")
 result = echo.execute({"message": "hello"})
 assert result.success is True
 assert result.message == "hello"
-ok("Tool.execute → ToolResult")
+ok("Tool.execute -> ToolResult")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -147,14 +148,14 @@ assert _resolve_date("2025-06-10") == "2025-06-10", "ISO passthrough failed"
 tomorrow = _resolve_date("tomorrow")
 assert tomorrow > today_str, "tomorrow should be after today"
 
-ok("today / hoy / tomorrow / mañana / ISO passthrough")
+ok("today / hoy / tomorrow / manana / ISO passthrough")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 4 · Single tool call  (mock calendar + AI)
 # ──────────────────────────────────────────────────────────────────────────────
 
-section("4 / Processor — single tool call")
+section("4 / Processor - single tool call")
 
 # Mock calendar
 mock_calendar = MagicMock(spec=CalendarIntegration)
@@ -178,14 +179,14 @@ processor = MessageProcessor(ai=mock_ai, directive=mock_directive)
 reply = processor.process("What's on my calendar today?")
 
 assert "Dentist" in mock_ai.chat.call_args[0][0], "Dentist not passed to chat"
-ok(f"Single tool call → reply: {reply!r}")
+ok(f"Single tool call -> reply: {reply!r}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 5 · Chained tool calls  (multi-delete scenario)
 # ──────────────────────────────────────────────────────────────────────────────
 
-section("5 / Processor — chained tool calls (multi-delete)")
+section("5 / Processor - chained tool calls (multi-delete)")
 
 mock_calendar2 = MagicMock(spec=CalendarIntegration)
 mock_calendar2.delete_event.return_value = None
@@ -210,14 +211,14 @@ reply2 = processor2.process("Delete all events this month")
 assert mock_calendar2.delete_event.call_count == 3, (
     f"Expected 3 delete calls, got {mock_calendar2.delete_event.call_count}"
 )
-ok(f"3 chained delete_event calls executed → reply: {reply2!r}")
+ok(f"3 chained delete_event calls executed -> reply: {reply2!r}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 6 · Chat fallback (no tool needed)
 # ──────────────────────────────────────────────────────────────────────────────
 
-section("6 / Processor — chat fallback")
+section("6 / Processor - chat fallback")
 
 mock_ai3 = MagicMock(spec=AIProvider)
 mock_ai3.choose_tools.return_value = [ToolCall(tool_name="chat", params={})]
@@ -230,14 +231,14 @@ mock_directive3.system_prompt.return_value = "You are a test bot."
 processor3 = MessageProcessor(ai=mock_ai3, directive=mock_directive3)
 reply3 = processor3.process("How are you?")
 assert reply3 == "I'm doing great, thanks!"
-ok(f"Chat fallback → {reply3!r}")
+ok(f"Chat fallback -> {reply3!r}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 7 · Tool failure stops the chain
 # ──────────────────────────────────────────────────────────────────────────────
 
-section("7 / Processor — tool failure stops chain")
+section("7 / Processor - tool failure stops chain")
 
 class FailTool(Tool):
     @property
@@ -263,7 +264,7 @@ processor4 = MessageProcessor(ai=mock_ai4, directive=mock_directive4)
 reply4 = processor4.process("trigger failure")
 assert "❌" in reply4
 assert mock_ai4.chat.call_count == 0, "chat() should NOT be called after a failure"
-ok(f"Tool failure stops chain immediately → {reply4!r}")
+ok("Tool failure stops chain immediately")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -290,13 +291,51 @@ ok("Custom system_prompt override works")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 9 · Config loader and plugin registry
+# ──────────────────────────────────────────────────────────────────────────────
+
+section("9 / Config loader and plugin registry")
+
+try:
+    from config.loader import load_config
+    from integrations import registry, PluginRegistry
+    ok("config loader and plugin registry imports")
+except Exception as e:
+    fail("config loader and plugin registry imports", e); errors += 1
+
+# Test that load_plugin accepts a config argument (we won't actually load a plugin
+# because that would require real credentials; we just check the signature)
+try:
+    from integrations import load_plugin
+    import inspect
+    sig = inspect.signature(load_plugin)
+    # Accepts plugin_type, plugin_name=None, config=None
+    params = list(sig.parameters.keys())
+    assert "config" in params, "load_plugin should accept config argument"
+    ok("load_plugin accepts config argument")
+except Exception as e:
+    fail("load_plugin signature check", e); errors += 1
+
+# Test that the registry can discover our template plugins (if they exist)
+try:
+    # Get discovered plugin types
+    plugin_types = registry.get_plugin_types()
+    # We expect at least the template plugins we created (if the test environment includes them)
+    # But to avoid depending on the presence of templates, we just check that it returns a dict.
+    assert isinstance(plugin_types, dict), "get_plugin_types should return a dict"
+    ok(f"plugin registry discovers plugins: {list(plugin_types.keys())}")
+except Exception as e:
+    fail("plugin registry discovery", e); errors += 1
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Summary
 # ──────────────────────────────────────────────────────────────────────────────
 
-print(f"\n{'═'*60}")
+print(f"\n{'='*60}")
 if errors:
-    print(f"  ❌ {errors} import error(s) — fix before running the bot.")
+    print(f"{FAIL} {errors} import error(s) — fix before running the bot.")
     sys.exit(1)
 else:
-    print("  ✅ All tests passed!")
-print(f"{'═'*60}\n")
+    print(f"{PASS} All tests passed!")
+print(f"{'='*60}\n")

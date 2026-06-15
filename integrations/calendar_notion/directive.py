@@ -8,8 +8,7 @@ Customisation
 - To change the bot's name or language, pass a custom system_prompt
   string to CalendarDirective.__init__().
 - To add a new tool, instantiate it here and append to self._tools.
-- DEFAULT_SYSTEM_PROMPT is intentionally language-neutral so that
-  the underlying AI model responds in whatever language the user writes.
+- DEFAULT_SYSTEM_PROMPT instructs the AI to detect the user's language and respond in the same language.
 """
 from __future__ import annotations
 
@@ -30,7 +29,7 @@ You are LushJr, a personal calendar assistant.
 
 Your responsibilities:
 - Help the user manage their calendar events efficiently.
-- Always reply in the same language the user writes in.
+- Detect the language of the user's message and respond in that same language.
 - Be concise, friendly, and proactive.
 
 Available tools:

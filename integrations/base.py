@@ -16,9 +16,12 @@ Plugin types:
 """
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
+
+import httpx
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -43,7 +46,7 @@ class Tool(ABC):
         }
 
         def execute(self, params):
-            send(params["to"], params["subject"], params.get("body", ""))
+            send(params["to"], params.get("subject", ""), params.get("body", ""))
             return ToolResult(success=True, message=f"Email sent to {params['to']}")
     """
 
@@ -127,6 +130,19 @@ class Directive(ABC):
         ...
 
 
+class BaseDirective(Directive):
+    """Base implementation for Directive that allows system prompt to be configured."""
+    def __init__(self, tools: list[Tool], system_prompt: str = "You are a helpful AI assistant."):
+        self._tools = tools
+        self._system_prompt = system_prompt
+
+    def tools(self) -> list[Tool]:
+        return self._tools
+
+    def system_prompt(self) -> str:
+        return self._system_prompt
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # AI Provider
 # ──────────────────────────────────────────────────────────────────────────────
@@ -168,6 +184,44 @@ class AIProvider(ABC):
             [ToolCall(tool_name="chat", params={})]
         """
         ...
+
+
+class BaseAIProvider(AIProvider):
+    """Base implementation for AIProvider that handles HTTP client setup for OpenAI-compatible APIs."""
+    def __init__(self, api_key: str, api_base: str, model: str, temperature: float = 0.7):
+        self.api_key = api_key
+        self.api_base = api_base.rstrip('/')
+        self.model = model
+        self.temperature = temperature
+        self._client = httpx.Client(
+            base_url=self.api_base,
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            timeout=30.0,
+        )
+
+    def chat(self, message: str, system_prompt: str) -> str:
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message},
+            ],
+            "temperature": self.temperature,
+        }
+        response = self._client.post("/chat/completions", json=payload)
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
+
+    def choose_tools(
+        self,
+        message: str,
+        tools: list[Tool],
+        system_prompt: str,
+    ) -> list[ToolCall]:
+        # This is a complex task; we provide a simple baseline that returns no tools.
+        # Subclasses should override this to provide actual tool selection.
+        return [ToolCall(tool_name="chat", params={})]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -227,6 +281,37 @@ class CalendarIntegration(ABC):
         ...
 
 
+class BaseCalendarIntegration(CalendarIntegration):
+    """Base implementation for CalendarIntegration using HTTP client (e.g., for Notion-like APIs)."""
+    def __init__(self, token: str, api_base: str):
+        self.token = token
+        self.api_base = api_base.rstrip('/')
+        self._client = httpx.Client(
+            base_url=self.api_base,
+            headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
+            timeout=30.0,
+        )
+
+    # These methods are left abstract because they are highly API-specific.
+    # Subclasses must implement them.
+    def query_events(self, date_start: str, date_end: str) -> list[CalendarEvent]:
+        raise NotImplementedError
+
+    def create_event(self, title: str, date_start: str, date_end: str | None = None,
+                     time_start: str | None = None, time_end: str | None = None,
+                     location: str | None = None, description: str | None = None) -> CalendarEvent:
+        raise NotImplementedError
+
+    def update_event(self, event_id: str, title: str | None = None,
+                     date_start: str | None = None, date_end: str | None = None,
+                     time_start: str | None = None, time_end: str | None = None,
+                     location: str | None = None, description: str | None = None) -> CalendarEvent:
+        raise NotImplementedError
+
+    def delete_event(self, event_id: str) -> None:
+        raise NotImplementedError
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Platform Bot
 # ──────────────────────────────────────────────────────────────────────────────
@@ -238,3 +323,13 @@ class PlatformBot(ABC):
     def run(self) -> None:
         """Start the bot and block until stopped."""
         ...
+
+
+class BasePlatformBot(PlatformBot):
+    """Base implementation for PlatformBot that provides a simple run loop."""
+    def __init__(self, processor: MessageProcessor):
+        self.processor = processor
+
+    def run(self) -> None:
+        # This is a placeholder; subclasses should implement actual platform-specific logic.
+        raise NotImplementedError("Subclasses must implement run() for their specific platform")

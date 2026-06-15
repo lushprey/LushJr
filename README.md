@@ -110,22 +110,59 @@ class MyNewTool(Tool):
 
 ---
 
-## Adding a new plugin
+## Adding a new plugin (Beginner-friendly)
 
-To add a new integration:
+We provide template directories for each plugin type to minimize boilerplate.
+To create a new plugin, copy the appropriate template and implement the required logic.
 
-1. Create a new folder inside `integrations/`.
-2. Implement the required abstract interfaces from `integrations/base.py`.
-3. Expose a factory function in `__init__.py`.
-4. Register the plugin in the application bootstrap process.
+### Using the Templates
 
-Examples:
+1. **Choose a template** based on the plugin type you want to create:
+   - `integrations/template_ai` for a new AI provider
+   - `integrations/template_calendar` for a new calendar backend
+   - `integrations/template_platform` for a new messaging platform
 
-- Google Calendar
-- Discord
-- WhatsApp
-- OpenAI
-- Anthropic
+2. **Copy the template** to a new directory with your plugin's name:
+   ```bash
+   # Example: creating a new AI provider called "my_ai"
+   cp -r integrations/template_ai integrations/my_ai
+   ```
+
+3. **Implement your plugin**:
+   - Edit the files in the new directory (see the docstrings in each file for guidance).
+   - For AI provider: modify `provider.py` to implement actual AI logic.
+   - For calendar: modify `integration.py` to implement the four calendar methods.
+   - For platform: modify `bot.py` to implement the `run` method with your platform's logic.
+   - Update `__init__.py` as needed (especially the factory function to handle your configuration).
+
+4. **Configure your plugin**:
+   - Add any required configuration to `config.yaml` under the appropriate section (`ai`, `calendar`, or `platform`).
+   - For secrets (API keys, tokens), the configuration loader reads them from environment variables (as specified in `config.yaml` using `_env` fields).
+   - Example: to set a custom model for your AI provider, add under `ai`:
+     ```yaml
+     model: "your-model-name"
+     ```
+
+5. **The bot will automatically discover and load your plugin** via the plugin registry in `integrations/registry.py`.
+   - If you want to explicitly specify which plugin to use (e.g., to override the default), you can add plugin overrides in `config.yaml`:
+     ```yaml
+     plugin_overrides:
+       ai: "my_ai"
+       calendar: "my_calendar"
+       platform: "my_platform"
+     ```
+
+### Examples of Plugins You Can Create
+
+- **AI providers**: OpenAI, Anthropic, Hugging Face, local LLMs (llama.cpp, etc.)
+- **Calendar backends**: Google Calendar, Outlook, iCal, etc.
+- **Platform integrations**: Discord, Slack, WhatsApp, web UI, etc.
+
+---
+
+## Note on Backward Compatibility
+
+Backward compatibility has been removed for simplicity. All plugins now require a configuration dictionary (provided by the config loader) and no longer fall back to reading environment variables directly. The config loader itself reads secrets from environment variables (as specified in `config.yaml`), so you continue to set `TELEGRAM_TOKEN`, `NVIDIA_API_KEY`, `NOTION_TOKEN`, and `DATABASE_ID` in your `.env` file.
 
 ---
 

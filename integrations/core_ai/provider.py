@@ -33,15 +33,30 @@ class NvidiaAIProvider(AIProvider):
 
     Parameters
     ----------
-    api_key : NVIDIA_API_KEY
-    model   : model slug, default "meta/llama-3.3-70b-instruct"
+    api_key : str
+        NVIDIA_API_KEY
+    model : str, default "meta/llama-3.3-70b-instruct"
+        Model slug to use for inference.
+    temperature : float, default 0.7
+        Sampling temperature for chat responses.
+    api_base : str, default "https://integrate.api.nvidia.com/v1"
+        Base URL for the API endpoint.
     """
 
-    BASE_URL = "https://integrate.api.nvidia.com/v1"
+    DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
-    def __init__(self, api_key: str, model: str = "meta/llama-3.3-70b-instruct") -> None:
-        self.client = OpenAI(base_url=self.BASE_URL, api_key=api_key)
-        self.model  = model
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "meta/llama-3.3-70b-instruct",
+        temperature: float = 0.7,
+        api_base: str = None,
+    ) -> None:
+        self.api_key = api_key
+        self.model = model
+        self.temperature = temperature
+        base_url = api_base or self.DEFAULT_BASE_URL
+        self.client = OpenAI(base_url=base_url, api_key=api_key)
 
     # ──────────────────────────────────────────────────────────────────────
     # AIProvider interface
@@ -52,10 +67,10 @@ class NvidiaAIProvider(AIProvider):
         completion = self.client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system",  "content": system_prompt},
-                {"role": "user",    "content": message},
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": message},
             ],
-            temperature=0.7,
+            temperature=self.temperature,
             max_tokens=1024,
         )
         return completion.choices[0].message.content.strip()
@@ -85,7 +100,7 @@ class NvidiaAIProvider(AIProvider):
                     {"role": "user",   "content": message},
                 ],
                 functions=functions,
-                temperature=0.2,
+                temperature=0.2,  # Lower temperature for more reliable tool selection
                 max_tokens=800,
             )
             msg = completion.choices[0].message
@@ -163,7 +178,7 @@ class NvidiaAIProvider(AIProvider):
                 {"role": "system", "content": fallback_system},
                 {"role": "user",   "content": message},
             ],
-            temperature=0.2,
+            temperature=0.2,  # Lower temperature for more reliable JSON output
             max_tokens=800,
         )
 
@@ -191,3 +206,6 @@ class NvidiaAIProvider(AIProvider):
             calls.append(ToolCall(tool_name=name, params=params))
 
         return calls or [ToolCall(tool_name="chat", params={})]
+
+
+__all__ = ["NvidiaAIProvider"]
