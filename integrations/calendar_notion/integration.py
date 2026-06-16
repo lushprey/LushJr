@@ -9,19 +9,18 @@ platform-agnostic.
 
 Fields are configurable so this works with any Notion database schema.
 """
-from __future__ import annotations
 
 import logging
 from typing import Any
 
 from notion_client import Client
 
-from integrations.base import CalendarIntegration, CalendarEvent
+from integrations.base import BaseIntegration, CalendarEvent
 
 logger = logging.getLogger(__name__)
 
 
-class NotionCalendarIntegration(CalendarIntegration):
+class NotionCalendarIntegration(BaseIntegration):
     """
     Reads and writes events in a Notion database.
 

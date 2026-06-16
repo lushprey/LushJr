@@ -20,6 +20,32 @@ logger = logging.getLogger(__name__)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Base Tool Class
+# ──────────────────────────────────────────────────────────────────────────────
+
+class BaseCalendarTool(Tool):
+    """Base class for calendar tools to reduce boilerplate."""
+
+    def __init__(self, calendar: NotionCalendarIntegration) -> None:
+        # Tool base class doesn't require any arguments in __init__
+        super().__init__()
+        self._calendar = calendar
+
+    def _resolve_date_param(self, param_value: str | None, default: str = "today") -> str | None:
+        """Resolve a date parameter if it's not None."""
+        if param_value is None:
+            return None
+        return _resolve_date(param_value)
+
+    def _validate_required_params(self, params: dict[str, Any], required_fields: list[str]) -> str | None:
+        """Validate required parameters and return error message if validation fails."""
+        for field in required_fields:
+            if not params.get(field):
+                return f"❌ {field} is required."
+        return None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Date utilities
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -81,11 +107,11 @@ def _fmt_event(event) -> str:
 # Tools
 # ──────────────────────────────────────────────────────────────────────────────
 
-class QueryEventsTool(Tool):
+class QueryEventsTool(BaseCalendarTool):
     """Retrieve calendar events between two dates."""
 
-    def __init__(self, calendar: CalendarIntegration) -> None:
-        self._calendar = calendar
+    def __init__(self, calendar: NotionCalendarIntegration) -> None:
+        super().__init__(calendar)
 
     @property
     def name(self) -> str:
@@ -103,8 +129,8 @@ class QueryEventsTool(Tool):
         }
 
     def execute(self, params: dict[str, Any]) -> ToolResult:
-        date_start = _resolve_date(params.get("date_start", "today"))
-        date_end   = _resolve_date(params.get("date_end",   "today"))
+        date_start = self._resolve_date_param(params.get("date_start", "today"))
+        date_end   = self._resolve_date_param(params.get("date_end",   "today"))
 
         if date_end < date_start:
             date_end = date_start
@@ -127,11 +153,11 @@ class QueryEventsTool(Tool):
         )
 
 
-class CreateEventTool(Tool):
+class CreateEventTool(BaseCalendarTool):
     """Create a new calendar event."""
 
-    def __init__(self, calendar: CalendarIntegration) -> None:
-        self._calendar = calendar
+    def __init__(self, calendar: NotionCalendarIntegration) -> None:
+        super().__init__(calendar)
 
     @property
     def name(self) -> str:
@@ -160,8 +186,8 @@ class CreateEventTool(Tool):
         if not title or not date_start:
             return ToolResult(success=False, message="❌ title and date_start are required.")
 
-        date_start = _resolve_date(date_start)
-        date_end   = _resolve_date(params["date_end"]) if params.get("date_end") else None
+        date_start = self._resolve_date_param(date_start)
+        date_end   = self._resolve_date_param(params["date_end"]) if params.get("date_end") else None
 
         event = self._calendar.create_event(
             title       = title,
@@ -179,11 +205,11 @@ class CreateEventTool(Tool):
         )
 
 
-class UpdateEventTool(Tool):
+class UpdateEventTool(BaseCalendarTool):
     """Update an existing calendar event."""
 
-    def __init__(self, calendar: CalendarIntegration) -> None:
-        self._calendar = calendar
+    def __init__(self, calendar: NotionCalendarIntegration) -> None:
+        super().__init__(calendar)
 
     @property
     def name(self) -> str:
@@ -212,9 +238,9 @@ class UpdateEventTool(Tool):
             return ToolResult(success=False, message="❌ event_id is required.")
 
         if params.get("date_start"):
-            params["date_start"] = _resolve_date(params["date_start"])
+            params["date_start"] = self._resolve_date_param(params["date_start"])
         if params.get("date_end"):
-            params["date_end"]   = _resolve_date(params["date_end"])
+            params["date_end"]   = self._resolve_date_param(params["date_end"])
 
         event = self._calendar.update_event(**params)
         return ToolResult(
@@ -224,11 +250,11 @@ class UpdateEventTool(Tool):
         )
 
 
-class DeleteEventTool(Tool):
+class DeleteEventTool(BaseCalendarTool):
     """Delete (archive) a calendar event."""
 
-    def __init__(self, calendar: CalendarIntegration) -> None:
-        self._calendar = calendar
+    def __init__(self, calendar: NotionCalendarIntegration) -> None:
+        super().__init__(calendar)
 
     @property
     def name(self) -> str:

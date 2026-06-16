@@ -44,8 +44,8 @@ def create_calendar_integration(config: dict) -> tuple:
     # Extract system prompt from config if available
     system_prompt = None
     if config is not None:
-        prompts_config = config.get("prompts", {})
-        system_prompt = prompts_config.get("calendar_system")
+        system_prompts_config = config.get("system_prompts", {})
+        system_prompt = system_prompts_config.get("default")
 
     # Create directive with the integration and optional system prompt
     directive = CalendarDirective(integration, system_prompt=system_prompt)

@@ -5,7 +5,7 @@ Plugin registry for auto-discovery and flexible loading.
 """
 import importlib
 import os
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 
 from . import DEFAULT_PLUGINS  # keep the default mapping for backward compatibility
 

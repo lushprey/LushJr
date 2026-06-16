@@ -1,8 +1,8 @@
 # LushJr Bot
 
-A modular, language-agnostic Telegram bot with AI and calendar management.
+A modular, language-agnostic Telegram bot with AI and Notion integration.
 
-The project uses a plugin architecture that allows components to be replaced independently (AI provider, calendar backend, messaging platform) without modifying the core logic.
+The project uses a plugin architecture that allows components to be replaced independently (AI provider, Notion backend, messaging platform) without modifying the core logic.
 
 ---
 
@@ -23,7 +23,7 @@ LushJr_bot/
 │   │   ├── __init__.py              #   factory → create_ai_provider()
 │   │   └── provider.py              #   NvidiaAIProvider
 │   │
-│   ├── calendar_notion/             # Plugin: Notion calendar
+│   ├── calendar_notion/             # Plugin: Notion integration
 │   │   ├── __init__.py              #   factory → create_calendar_integration()
 │   │   ├── integration.py           #   NotionCalendarIntegration
 │   │   ├── directive.py             #   CalendarDirective (tools + system prompt)
@@ -119,7 +119,7 @@ To create a new plugin, copy the appropriate template and implement the required
 
 1. **Choose a template** based on the plugin type you want to create:
    - `integrations/template_ai` for a new AI provider
-   - `integrations/template_calendar` for a new calendar backend
+   - `integrations/template_calendar` for a new integration (adaptable to any plugin type)
    - `integrations/template_platform` for a new messaging platform
 
 2. **Copy the template** to a new directory with your plugin's name:
@@ -131,7 +131,7 @@ To create a new plugin, copy the appropriate template and implement the required
 3. **Implement your plugin**:
    - Edit the files in the new directory (see the docstrings in each file for guidance).
    - For AI provider: modify `provider.py` to implement actual AI logic.
-   - For calendar: modify `integration.py` to implement the four calendar methods.
+   - For calendar: modify `integration.py` to implement the calendar methods.
    - For platform: modify `bot.py` to implement the `run` method with your platform's logic.
    - Update `__init__.py` as needed (especially the factory function to handle your configuration).
 
@@ -155,7 +155,7 @@ To create a new plugin, copy the appropriate template and implement the required
 ### Examples of Plugins You Can Create
 
 - **AI providers**: OpenAI, Anthropic, Hugging Face, local LLMs (llama.cpp, etc.)
-- **Calendar backends**: Google Calendar, Outlook, iCal, etc.
+- **Data & service integrations**: Google Calendar, Outlook, iCal, databases, APIs, etc.
 - **Platform integrations**: Discord, Slack, WhatsApp, web UI, etc.
 
 ---

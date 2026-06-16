@@ -45,7 +45,7 @@ def build_bot():
 
     # Load plugins using the registry, passing config to factories
     ai = load_plugin("ai", config=config)
-    calendar_integration, directive = load_plugin("calendar", config=config)
+    assistant_integration, directive = load_plugin("calendar", config=config)
     platform_factory = load_plugin("platform", config=config)
 
     processor = MessageProcessor(ai=ai, directive=directive)

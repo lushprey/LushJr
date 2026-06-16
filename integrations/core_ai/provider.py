@@ -13,7 +13,6 @@ reliable). If the API doesn't support it, it falls back to asking the
 model to return JSON directly.  Either way, it may return *multiple*
 ToolCall objects so the processor can chain actions automatically.
 """
-from __future__ import annotations
 
 import json
 import logging

@@ -5,14 +5,15 @@ Directive that wires the Notion calendar tools together.
 
 Customisation
 -------------
-- To change the bot's name or language, pass a custom system_prompt
+- To change the bot's name or behavior, pass a custom system_prompt
   string to CalendarDirective.__init__().
 - To add a new tool, instantiate it here and append to self._tools.
-- DEFAULT_SYSTEM_PROMPT instructs the AI to detect the user's language and respond in the same language.
+- DEFAULT_SYSTEM_PROMPT provides baseline instructions for the AI.
 """
 from __future__ import annotations
 
-from integrations.base import CalendarIntegration, Directive, Tool
+from integrations.base import BaseDirective, Directive, Tool
+from .integration import NotionCalendarIntegration
 from .tools import (
     CreateEventTool,
     DeleteEventTool,
@@ -25,13 +26,6 @@ from .tools import (
 # ──────────────────────────────────────────────────────────────────────────────
 
 DEFAULT_SYSTEM_PROMPT = """\
-You are LushJr, a personal calendar assistant.
-
-Your responsibilities:
-- Help the user manage their calendar events efficiently.
-- Detect the language of the user's message and respond in that same language.
-- Be concise, friendly, and proactive.
-
 Available tools:
 - query_events  : List events in a date range.
 - create_event  : Add a new event.
@@ -51,13 +45,13 @@ Guidelines:
 # Directive
 # ──────────────────────────────────────────────────────────────────────────────
 
-class CalendarDirective(Directive):
+class CalendarDirective(BaseDirective):
     """
     Groups all calendar tools and the system prompt.
 
     Parameters
     ----------
-    calendar      : Any CalendarIntegration (Notion, Google, …).
+    calendar      : NotionCalendarIntegration
     system_prompt : Override the default prompt to change language, persona, etc.
     extra_tools   : Additional Tool instances to register alongside the defaults.
     """
@@ -68,19 +62,20 @@ class CalendarDirective(Directive):
         system_prompt: str | None = None,
         extra_tools:   list[Tool] | None = None,
     ) -> None:
-        self._tools: list[Tool] = [
+        tools = [
             QueryEventsTool(calendar),
             CreateEventTool(calendar),
             UpdateEventTool(calendar),
             DeleteEventTool(calendar),
         ]
         if extra_tools:
-            self._tools.extend(extra_tools)
+            tools.extend(extra_tools)
 
-        self._system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
+        # If a system_prompt is provided (e.g., from config), use it as base
+        # and append the default calendar-specific prompt
+        if system_prompt is not None:
+            base_system_prompt = f"{system_prompt}\n\n{DEFAULT_SYSTEM_PROMPT}"
+        else:
+            base_system_prompt = DEFAULT_SYSTEM_PROMPT
 
-    def tools(self) -> list[Tool]:
-        return self._tools
-
-    def system_prompt(self) -> str:
-        return self._system_prompt
+        super().__init__(tools=tools, system_prompt=base_system_prompt)

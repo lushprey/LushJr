@@ -1,11 +1,11 @@
 """
 integrations/base.py
 ────────────────────
-Abstract interfaces for the LushJr plugin system.
+Abstract interfaces and base implementations for the LushJr plugin system.
 
-Every plugin must implement the relevant abstract class here.
-This file is the contract — don't change it unless you're adding
-a new plugin type.
+This file contains:
+1. Abstract interfaces that define contracts for all plugin types
+2. Optional base implementations that provide common functionality
 
 Plugin types:
   - AIProvider    → AI inference backend (Nvidia, OpenAI, Anthropic…)
@@ -13,6 +13,12 @@ Plugin types:
   - Directive     → Groups tools + system prompt for a use-case
   - Tool          → A single action the bot can perform
   - PlatformBot   → Messaging platform (Telegram, Discord, WhatsApp…)
+
+Base implementations (provided as conveniences):
+  - BaseAIProvider    → HTTP client setup for OpenAI-compatible APIs
+  - BaseIntegration   → Base class for all integration types
+  - BasePlatformBot   → Simple run loop for platform bots
+  - BaseDirective     → Configurable system prompt for directives
 """
 from __future__ import annotations
 
@@ -22,6 +28,45 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Base Integration (for all integration types)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class BaseIntegration(ABC):
+    """Base class for all integrations in the LushJr bot system.
+
+    This provides a common foundation for all integration types (AI providers,
+    calendar integrations, platform bots, etc.) to ensure consistency and
+    reduce boilerplate code.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the base integration."""
+        pass
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# HTTP Client Base (for integrations that make HTTP requests)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class BaseHttpClient(BaseIntegration):
+    """Base class for integrations that make HTTP requests with bearer token authentication.
+
+    Provides a shared httpx.Client instance with proper authentication headers.
+    Integrations should inherit from this class when they need to make HTTP requests
+    to APIs that use bearer token authentication.
+    """
+    def __init__(self, token: str, api_base: str):
+        super().__init__()
+        self.token = token
+        self.api_base = api_base.rstrip('/')
+        self._client = httpx.Client(
+            base_url=self.api_base,
+            headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
+            timeout=30.0,
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -50,7 +95,7 @@ class Tool(ABC):
             return ToolResult(success=True, message=f"Email sent to {params['to']}")
     """
 
-    # ── Required class attributes ────────────────────────────────────────────
+    # ── Required class attributes ─────────────────────
 
     @property
     @abstractmethod
@@ -75,7 +120,7 @@ class Tool(ABC):
         """
         ...
 
-    # ── Derived helpers (no need to override) ───────────────────────────────
+    # ── Derived helpers (no need to override) ───────────────
 
     @property
     def required_params(self) -> list[str]:
@@ -85,7 +130,7 @@ class Tool(ABC):
     def optional_params(self) -> list[str]:
         return [k for k, v in self.params.items() if not v.get("required", False)]
 
-    # ── Interface ────────────────────────────────────────────────────────────
+    # ── Interface ──────────────────────────────────────────
 
     @abstractmethod
     def execute(self, params: dict[str, Any]) -> "ToolResult":
@@ -144,6 +189,75 @@ class BaseDirective(Directive):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Calendar Event (Platform-agnostic)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class CalendarEvent:
+    """Platform-agnostic calendar event."""
+    id:          str
+    title:       str
+    date_start:  str                  # ISO-8601  "YYYY-MM-DD"
+    date_end:    str | None = None
+    time_start:  str | None = None    # "HH:MM"
+    time_end:    str | None = None    # "HH:MM"
+    location:    str | None = None
+    description: str | None = None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Calendar Integration Interface
+# ──────────────────────────────────────────────────────────────────────────────
+
+class CalendarIntegration(ABC):
+    """
+    Calendar integration backend for reading and writing calendar events.
+
+    Implement this to swap calendar backends (Notion, Google Calendar, iCal, etc.)
+    without changing the rest of the bot's logic.
+    """
+
+    @abstractmethod
+    def query_events(self, date_start: str, date_end: str) -> list[CalendarEvent]:
+        """Query events within a date range (inclusive)."""
+        ...
+
+    @abstractmethod
+    def create_event(
+        self,
+        title: str,
+        date_start: str,
+        date_end: str | None = None,
+        time_start: str | None = None,
+        time_end: str | None = None,
+        location: str | None = None,
+        description: str | None = None,
+    ) -> CalendarEvent:
+        """Create a new calendar event."""
+        ...
+
+    @abstractmethod
+    def update_event(
+        self,
+        event_id: str,
+        title: str | None = None,
+        date_start: str | None = None,
+        date_end: str | None = None,
+        time_start: str | None = None,
+        time_end: str | None = None,
+        location: str | None = None,
+        description: str | None = None,
+    ) -> CalendarEvent:
+        """Update an existing calendar event."""
+        ...
+
+    @abstractmethod
+    def delete_event(self, event_id: str) -> None:
+        """Delete/Archive a calendar event."""
+        ...
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # AI Provider
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -186,18 +300,15 @@ class AIProvider(ABC):
         ...
 
 
-class BaseAIProvider(AIProvider):
-    """Base implementation for AIProvider that handles HTTP client setup for OpenAI-compatible APIs."""
+class BaseAIProvider(BaseHttpClient, AIProvider):
+    """Base implementation for AIProvider that handles HTTP client setup for OpenAI-compatible APIs.
+
+    Inherits from BaseHttpClient for shared HTTP functionality.
+    """
     def __init__(self, api_key: str, api_base: str, model: str, temperature: float = 0.7):
-        self.api_key = api_key
-        self.api_base = api_base.rstrip('/')
+        super().__init__(token=api_key, api_base=api_base)
         self.model = model
         self.temperature = temperature
-        self._client = httpx.Client(
-            base_url=self.api_base,
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-            timeout=30.0,
-        )
 
     def chat(self, message: str, system_prompt: str) -> str:
         payload = {
@@ -225,94 +336,6 @@ class BaseAIProvider(AIProvider):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Calendar Integration  (domain-specific, kept separate from the generic layer)
-# ──────────────────────────────────────────────────────────────────────────────
-
-@dataclass
-class CalendarEvent:
-    """Platform-agnostic calendar event."""
-    id:          str
-    title:       str
-    date_start:  str                  # ISO-8601  "YYYY-MM-DD"
-    date_end:    str | None = None
-    time_start:  str | None = None    # "HH:MM"
-    time_end:    str | None = None    # "HH:MM"
-    location:    str | None = None
-    description: str | None = None
-
-
-class CalendarIntegration(ABC):
-    """Calendar storage backend."""
-
-    @abstractmethod
-    def query_events(self, date_start: str, date_end: str) -> list[CalendarEvent]:
-        """Return events whose start date falls in [date_start, date_end]."""
-        ...
-
-    @abstractmethod
-    def create_event(
-        self,
-        title:       str,
-        date_start:  str,
-        date_end:    str | None = None,
-        time_start:  str | None = None,
-        time_end:    str | None = None,
-        location:    str | None = None,
-        description: str | None = None,
-    ) -> CalendarEvent:
-        ...
-
-    @abstractmethod
-    def update_event(
-        self,
-        event_id:    str,
-        title:       str | None = None,
-        date_start:  str | None = None,
-        date_end:    str | None = None,
-        time_start:  str | None = None,
-        time_end:    str | None = None,
-        location:    str | None = None,
-        description: str | None = None,
-    ) -> CalendarEvent:
-        ...
-
-    @abstractmethod
-    def delete_event(self, event_id: str) -> None:
-        ...
-
-
-class BaseCalendarIntegration(CalendarIntegration):
-    """Base implementation for CalendarIntegration using HTTP client (e.g., for Notion-like APIs)."""
-    def __init__(self, token: str, api_base: str):
-        self.token = token
-        self.api_base = api_base.rstrip('/')
-        self._client = httpx.Client(
-            base_url=self.api_base,
-            headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
-            timeout=30.0,
-        )
-
-    # These methods are left abstract because they are highly API-specific.
-    # Subclasses must implement them.
-    def query_events(self, date_start: str, date_end: str) -> list[CalendarEvent]:
-        raise NotImplementedError
-
-    def create_event(self, title: str, date_start: str, date_end: str | None = None,
-                     time_start: str | None = None, time_end: str | None = None,
-                     location: str | None = None, description: str | None = None) -> CalendarEvent:
-        raise NotImplementedError
-
-    def update_event(self, event_id: str, title: str | None = None,
-                     date_start: str | None = None, date_end: str | None = None,
-                     time_start: str | None = None, time_end: str | None = None,
-                     location: str | None = None, description: str | None = None) -> CalendarEvent:
-        raise NotImplementedError
-
-    def delete_event(self, event_id: str) -> None:
-        raise NotImplementedError
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # Platform Bot
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -325,9 +348,10 @@ class PlatformBot(ABC):
         ...
 
 
-class BasePlatformBot(PlatformBot):
+class BasePlatformBot(BaseIntegration, PlatformBot):
     """Base implementation for PlatformBot that provides a simple run loop."""
     def __init__(self, processor: MessageProcessor):
+        super().__init__()
         self.processor = processor
 
     def run(self) -> None:

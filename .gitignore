@@ -1,7 +1,6 @@
 .env
 .claude
 CLAUDE.md
-
 # Python
 __pycache__/
 *.py[cod]

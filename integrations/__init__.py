@@ -3,9 +3,6 @@ integrations/__init__.py
 ────────────────────────
 Plugin registry and loader for the modular bot system.
 """
-import importlib
-import os
-from typing import Dict, Any, Tuple, Optional
 
 
 # Plugin registry mapping: plugin_type -> default_plugin_name
