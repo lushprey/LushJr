@@ -1,125 +1,316 @@
 """
-integrations/template_calendar/directive.py
-───────────────────────────────────────────
-Template directive implementation.
+integrations/my_data/directive.py
+──────────────────────────────────
+Directive that defines tools and system prompt for data operations.
 
-This template demonstrates how to create a directive for your integration.
-A directive bundles tools and a system prompt, and is primarily used with
-certain plugin types (like calendar integrations).
+A Directive bundles:
+1. A list of Tool objects (what the AI can do)
+2. A system prompt (how the AI should behave)
 
-Not all plugin types use directives:
-- AI providers: Typically don't use directives (handle prompting directly)
-- Platform bots: May or may not use directives depending on design
-- Other integrations: Use directives as needed for your architecture
+Each tool wraps a method from your DataIntegration backend.
 
-If your plugin type uses directives, you can:
-- Create your own directive as shown below, wrapping your integration's methods with tools
-- Reuse existing directives if they match your tool interfaces
-- Adapt the pattern to your specific needs
-
-For simplicity, this template creates a directive with basic example tools
-that demonstrate the tool creation pattern.
+To customize:
+- Modify DEFAULT_SYSTEM_PROMPT to change instructions
+- Add/remove tools in __init__
+- Create custom Tool subclasses for domain-specific logic
 """
 
-from integrations.base import BaseDirective, Directive, Tool, ToolResult
+import logging
+from typing import Any
+
+from integrations.base import BaseDirective, Tool, ToolResult, DataIntegration
+
+logger = logging.getLogger(__name__)
 
 
-class ExampleQueryTool(Tool):
-    """Example tool demonstrating the tool pattern."""
-    def __init__(self, integration):
+# ──────────────────────────────────────────────────────────────────────────────
+# Custom tools (optional — adapt to your domain)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class QueryTool(Tool):
+    """
+    Query entities with flexible filters.
+
+    This is a generic tool that works with any DataIntegration.
+    Filters are backend-specific — the AI will learn from the description.
+    """
+
+    def __init__(self, integration: DataIntegration) -> None:
         self._integration = integration
 
     @property
     def name(self) -> str:
-        return "example_query"
+        return "query"
 
     @property
     def description(self) -> str:
-        return "Example query operation."
+        return "Search for entities matching given criteria (filters are flexible)"
 
     @property
     def params(self) -> dict:
         return {
-            "query": {"type": "string", "description": "Query string", "required": True},
+            "filters": {
+                "type": "object",
+                "description": "Filter object (e.g., {'status': 'open', 'date_start': '2025-01-01'})",
+                "required": True,
+            },
         }
 
-    def execute(self, params: dict) -> ToolResult:
+    def execute(self, params: dict[str, Any]) -> ToolResult:
+        filters = params.get("filters", {})
+
         try:
-            # Example: Call your integration's method
-            result = self._integration.example_method(params["query"])
+            entities = self._integration.query(filters)
+
+            if not entities:
+                return ToolResult(
+                    success=True,
+                    message="No entities found matching the criteria.",
+                    data={"count": 0, "entities": []},
+                )
+
+            # Format entities for display
+            lines = [f"Found {len(entities)} entity/entities:"]
+            for entity in entities:
+                lines.append(f"  - {entity.title} (ID: {entity.id})")
+
             return ToolResult(
                 success=True,
-                message=f"Query completed: {result}",
-                data={"result": result},
+                message="\n".join(lines),
+                data={
+                    "count": len(entities),
+                    "entities": [
+                        {
+                            "id": e.id,
+                            "title": e.title,
+                            "metadata": e.metadata,
+                        }
+                        for e in entities
+                    ],
+                },
             )
         except Exception as e:
-            return ToolResult(success=False, message=f"Error in query: {e}")
+            logger.exception("Query failed")
+            return ToolResult(success=False, message=f"Query failed: {e}")
 
 
-class ExampleActionTool(Tool):
-    """Example tool demonstrating an action operation."""
-    def __init__(self, integration):
+class CreateTool(Tool):
+    """Create a new entity."""
+
+    def __init__(self, integration: DataIntegration) -> None:
         self._integration = integration
 
     @property
     def name(self) -> str:
-        return "example_action"
+        return "create"
 
     @property
     def description(self) -> str:
-        return "Perform an example action."
+        return "Create a new entity with title and metadata"
 
     @property
     def params(self) -> dict:
         return {
-            "action": {"type": "string", "description": "Action to perform", "required": True},
-            "value":  {"type": "string", "description": "Value for action", "required": False},
+            "title": {
+                "type": "string",
+                "description": "Entity title/name",
+                "required": True,
+            },
+            "metadata": {
+                "type": "object",
+                "description": "Additional data (e.g., {'status': 'new', 'priority': 'high'})",
+                "required": False,
+            },
         }
 
-    def execute(self, params: dict) -> ToolResult:
+    def execute(self, params: dict[str, Any]) -> ToolResult:
+        title = params.get("title")
+        metadata = params.get("metadata", {})
+
+        if not title:
+            return ToolResult(success=False, message="Title is required")
+
         try:
-            # Example: Call your integration's method
-            result = self._integration.example_action(params["action"], params.get("value"))
+            from integrations.base import DataEntity
+
+            entity = DataEntity(id="", title=title, metadata=metadata)
+            created = self._integration.create(entity)
+
             return ToolResult(
                 success=True,
-                message=f"Action completed: {result}",
-                data={"result": result},
+                message=f"✅ Created: {created.title} (ID: {created.id})",
+                data={
+                    "id": created.id,
+                    "title": created.title,
+                    "metadata": created.metadata,
+                },
             )
         except Exception as e:
-            return ToolResult(success=False, message=f"Error in action: {e}")
+            logger.exception("Create failed")
+            return ToolResult(success=False, message=f"Create failed: {e}")
+
+
+class UpdateTool(Tool):
+    """Update an existing entity."""
+
+    def __init__(self, integration: DataIntegration) -> None:
+        self._integration = integration
+
+    @property
+    def name(self) -> str:
+        return "update"
+
+    @property
+    def description(self) -> str:
+        return "Update an existing entity by ID"
+
+    @property
+    def params(self) -> dict:
+        return {
+            "entity_id": {
+                "type": "string",
+                "description": "ID of the entity to update",
+                "required": True,
+            },
+            "updates": {
+                "type": "object",
+                "description": "Fields to update (e.g., {'title': 'new title', 'status': 'done'})",
+                "required": True,
+            },
+        }
+
+    def execute(self, params: dict[str, Any]) -> ToolResult:
+        entity_id = params.get("entity_id")
+        updates = params.get("updates", {})
+
+        if not entity_id:
+            return ToolResult(success=False, message="entity_id is required")
+        if not updates:
+            return ToolResult(success=False, message="updates object is required")
+
+        try:
+            updated = self._integration.update(entity_id, updates)
+
+            return ToolResult(
+                success=True,
+                message=f"✅ Updated: {updated.title}",
+                data={
+                    "id": updated.id,
+                    "title": updated.title,
+                    "metadata": updated.metadata,
+                },
+            )
+        except Exception as e:
+            logger.exception("Update failed")
+            return ToolResult(success=False, message=f"Update failed: {e}")
+
+
+class DeleteTool(Tool):
+    """Delete an entity."""
+
+    def __init__(self, integration: DataIntegration) -> None:
+        self._integration = integration
+
+    @property
+    def name(self) -> str:
+        return "delete"
+
+    @property
+    def description(self) -> str:
+        return "Delete an entity by ID"
+
+    @property
+    def params(self) -> dict:
+        return {
+            "entity_id": {
+                "type": "string",
+                "description": "ID of the entity to delete",
+                "required": True,
+            },
+        }
+
+    def execute(self, params: dict[str, Any]) -> ToolResult:
+        entity_id = params.get("entity_id")
+
+        if not entity_id:
+            return ToolResult(success=False, message="entity_id is required")
+
+        try:
+            self._integration.delete(entity_id)
+            return ToolResult(
+                success=True,
+                message=f"🗑️ Deleted entity {entity_id}",
+            )
+        except Exception as e:
+            logger.exception("Delete failed")
+            return ToolResult(success=False, message=f"Delete failed: {e}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Default system prompt
+# ──────────────────────────────────────────────────────────────────────────────
+
+DEFAULT_SYSTEM_PROMPT = """\
+Available tools:
+- query  : Search for entities
+- create : Add a new entity
+- update : Modify an existing entity
+- delete : Remove an entity
+- chat   : Answer general questions
+
+Guidelines:
+- Use query first if the user asks about existing entities
+- Confirm before deleting (ask user if not explicit)
+- Be concise in confirmations
+"""
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Directive
 # ──────────────────────────────────────────────────────────────────────────────
 
-class TemplateDirective(BaseDirective):
+class MyDataDirective(BaseDirective):
     """
-    A template directive that bundles tools with a system prompt.
+    Bundles tools and system prompt for data operations.
 
-    You can customize the system prompt by passing a custom string to
-    the constructor, or by overriding the system_prompt() method.
+    Parameters
+    ----------
+    integration : DataIntegration
+        The backend to use for all operations
+    system_prompt : str, optional
+        Custom system prompt (overrides default)
+    extra_tools : list[Tool], optional
+        Additional custom tools to register
     """
 
     def __init__(
         self,
-        integration,
-        system_prompt: str | None = None,
+        integration: DataIntegration,
+        system_prompt: str = None,
+        extra_tools: list[Tool] = None,
     ) -> None:
-        # Create tools that wrap your integration's methods
-        # ADAPT THESE TO MATCH YOUR INTEGRATION'S ACTUAL METHODS
+        # Build tool list
         tools = [
-            ExampleQueryTool(integration),
-            ExampleActionTool(integration),
-            # Add more tools as needed for your integration
+            QueryTool(integration),
+            CreateTool(integration),
+            UpdateTool(integration),
+            DeleteTool(integration),
         ]
-        default_prompt = (
-            "You are a helpful assistant. Use the available tools to assist the user.\n"
-            "Always reply in the same language the user writes in."
-        )
-        final_prompt = system_prompt or default_prompt
+
+        if extra_tools:
+            tools.extend(extra_tools)
+
+        # Use custom prompt or default
+        final_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
 
         super().__init__(tools=tools, system_prompt=final_prompt)
 
 
-__all__ = ["TemplateDirective", "ExampleQueryTool", "ExampleActionTool"]
+__all__ = [
+    "MyDataDirective",
+    "QueryTool",
+    "CreateTool",
+    "UpdateTool",
+    "DeleteTool",
+    "DEFAULT_SYSTEM_PROMPT",
+]

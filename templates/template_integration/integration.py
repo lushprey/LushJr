@@ -1,77 +1,236 @@
 """
-integrations/template_integration/integration.py
-───────────────────────────────────────────
-Template integration implementation.
+integrations/my_data/integration.py
+────────────────────────────────────
+Custom data integration implementation.
 
-This template demonstrates how to create a custom integration by showing
-how to inherit from BaseIntegration, the base class for all integration types.
-To use this template:
+This template shows how to create a data backend that works with
+the DataIntegration interface. Works with ANY data type:
+- Calendar events
+- Tasks
+- Notes
+- CRM contacts
+- Database records
+- Custom data
 
-1. Determine your plugin type (ai, calendar, platform, etc.)
-2. Inherit from BaseIntegration and add any necessary functionality:
-   - For AI providers: Add API client setup and implement AIProvider methods
-   - For calendar integrations: Add calendar-specific logic and methods
-   - For platform bots: Add platform-specific logic and implement PlatformBot methods
-   - For other plugins: Add your specific integration logic
-3. Implement the required methods for your chosen interface.
-4. Adapt the __init__ method to handle your specific configuration needs.
+Key methods to implement:
+- query(): Retrieve entities matching filters
+- create(): Add new entity and return with ID
+- update(): Modify entity and return updated version
+- delete(): Remove/archive entity
 
-The Base* classes in integrations.base provide common functionality.
+To use:
+1. Copy to integrations/my_data/
+2. Implement the abstract methods
+3. Handle your specific backend's API/protocol
 """
 
-from integrations.base import BaseIntegration
+import logging
+from typing import Any
+
+from integrations.base import BaseIntegration, DataIntegration, DataEntity
+
+logger = logging.getLogger(__name__)
 
 
-class TemplateIntegration(BaseIntegration):
+class MyDataIntegration(BaseIntegration, DataIntegration):
     """
-    A template integration class showing how to inherit from a base integration class.
+    Custom data backend for [YOUR_SERVICE_NAME].
 
-    EXAMPLE: This inherits from BaseIntegration, the base class for all integration types.
+    Implements the generic DataIntegration interface, allowing it to
+    work with any data type your service supports.
 
-    To create a specific integration type, inherit from BaseIntegration and add the necessary functionality:
-
-    - For AI providers: Add API client setup and implement AIProvider methods
-    - For platform bots: Add platform-specific logic and implement PlatformBot methods
-    - For other plugins: Add your specific integration logic
-
-    The BaseIntegration class provides a common foundation for all integration types.
+    Parameters
+    ----------
+    token : str
+        Authentication token for your service
+    api_base : str, optional
+        Base URL for your API
+    database_id : str, optional
+        ID of the database/workspace/collection to use
+    other_config : str, optional
+        Add whatever configuration your backend needs
     """
 
-    def __init__(self, token: str, api_base: str = None):
-        """
-        Initialize the template integration.
-
-        Args:
-            token: Authentication token for the service.
-            api_base: Base URL for the API (if applicable).
-        """
-        # Initialize base integration
+    def __init__(
+        self,
+        token: str,
+        api_base: str = None,
+        database_id: str = None,
+        **kwargs,
+    ) -> None:
         super().__init__()
 
-        # Store configuration (to be implemented by specific integrations)
         self.token = token
         self.api_base = api_base
+        self.database_id = database_id
+
+        # TODO: Initialize your API client here
+        # Examples:
+        #   self.client = httpx.Client(
+        #       base_url=self.api_base,
+        #       headers={"Authorization": f"Bearer {self.token}"}
+        #   )
+        #   self.client = MyServiceClient(token=token, api_base=api_base)
+
+        logger.info(f"Initialized {self.__class__.__name__}")
 
     # ──────────────────────────────────────────────────────────────────────
-    # EXAMPLE METHODS - IMPLEMENT BASED ON YOUR INTEGRATION TYPE
+    # DataIntegration interface (REQUIRED)
     # ──────────────────────────────────────────────────────────────────────
 
-    # Implement the methods required for your specific integration type:
-    # - AI providers: Implement AIProvider interface methods (chat, choose_tools)
-    # - Calendar integrations: Implement CalendarIntegration interface methods
-    #   (query_events, create_event, update_event, delete_event)
-    # - Platform bots: Implement PlatformBot interface method (run)
-    # - Other plugins: Implement your specific interface methods
-
-    # EXAMPLE: A simple echo method for demonstration
-
-    # EXAMPLE: A simple echo method for demonstration
-    def echo(self, message: str) -> str:
+    def query(self, filters: dict[str, Any]) -> list[DataEntity]:
         """
-        Example method that echoes back a message.
-        REPLACE THIS WITH YOUR ACTUAL INTEGRATION METHODS.
+        Query entities matching the given filters.
+
+        Filters are completely flexible — your implementation decides
+        how to interpret them based on your backend's capabilities.
+
+        Examples of filter dicts:
+        - Calendar: {"date_start": "2025-01-01", "date_end": "2025-12-31"}
+        - Tasks: {"status": "open", "assigned_to": "john"}
+        - Notes: {"tag": "work", "created_after": "2025-01-01"}
+        - CRM: {"lead_status": "qualified", "industry": "tech"}
+
+        Args:
+            filters: Dictionary of filter criteria (backend-specific)
+
+        Returns:
+            List of DataEntity objects matching the filters
+
+        Raises:
+            Should return empty list if no matches, not raise errors
         """
-        return f"Echo: {message}"
+        logger.debug(f"Querying with filters: {filters}")
+
+        # TODO: Implement your query logic
+        # Example pseudo-code:
+        # response = self.client.get(
+        #     f"/entities",
+        #     params=filters,
+        # )
+        # return [self._parse_entity(e) for e in response.json()["results"]]
+
+        raise NotImplementedError("Implement query() for your backend")
+
+    def create(self, entity: DataEntity) -> DataEntity:
+        """
+        Create a new entity in your backend.
+
+        The entity's ID may be empty — your backend should assign one
+        and return the entity with the populated ID.
+
+        Args:
+            entity: DataEntity with title and metadata set
+                   (id may be empty)
+
+        Returns:
+            The created entity WITH id assigned by backend
+
+        Raises:
+            Should raise descriptive errors only on real failures
+        """
+        logger.debug(f"Creating entity: {entity.title}")
+
+        # TODO: Implement your create logic
+        # Example pseudo-code:
+        # response = self.client.post(
+        #     f"/entities",
+        #     json={"title": entity.title, **entity.metadata},
+        # )
+        # created_id = response.json()["id"]
+        # entity.id = created_id
+        # return entity
+
+        raise NotImplementedError("Implement create() for your backend")
+
+    def update(self, entity_id: str, updates: dict[str, Any]) -> DataEntity:
+        """
+        Update an entity and return the updated version.
+
+        Updates dict contains only the fields to change.
+        You must fetch the current entity, apply updates, and return it.
+
+        Args:
+            entity_id: ID of the entity to update
+            updates: Dictionary of fields to update
+                    (e.g., {"title": "new title", "status": "done"})
+
+        Returns:
+            The updated entity (with all fields)
+
+        Raises:
+            May raise if entity not found
+        """
+        logger.debug(f"Updating entity {entity_id} with: {updates}")
+
+        # TODO: Implement your update logic
+        # Example pseudo-code:
+        # response = self.client.patch(
+        #     f"/entities/{entity_id}",
+        #     json=updates,
+        # )
+        # return self._parse_entity(response.json())
+
+        raise NotImplementedError("Implement update() for your backend")
+
+    def delete(self, entity_id: str) -> None:
+        """
+        Delete or archive an entity.
+
+        Implementation-dependent: "delete" might mean:
+        - Permanently remove (rare, risky)
+        - Archive (safer, reversible)
+        - Mark as inactive
+        - Move to trash
+
+        Choose what makes sense for your backend.
+
+        Args:
+            entity_id: ID of the entity to delete
+
+        Raises:
+            May raise if entity not found
+        """
+        logger.debug(f"Deleting entity {entity_id}")
+
+        # TODO: Implement your delete logic
+        # Example pseudo-code:
+        # self.client.delete(f"/entities/{entity_id}")
+        # OR for soft delete:
+        # self.client.patch(f"/entities/{entity_id}", json={"archived": True})
+
+        raise NotImplementedError("Implement delete() for your backend")
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Private helpers (optional)
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _parse_entity(self, raw: dict[str, Any]) -> DataEntity:
+        """
+        Convert a raw API response to a DataEntity.
+
+        Implement this helper to DRY up the conversion logic.
+
+        Args:
+            raw: Raw response from your API
+
+        Returns:
+            DataEntity with id, title, and metadata populated
+        """
+        # TODO: Implement parsing logic for your backend
+        # Example:
+        # return DataEntity(
+        #     id=raw.get("id"),
+        #     title=raw.get("title") or raw.get("name"),
+        #     metadata={
+        #         "created_at": raw.get("created_at"),
+        #         "updated_at": raw.get("updated_at"),
+        #         "status": raw.get("status"),
+        #         # ... other fields
+        #     }
+        # )
+
+        raise NotImplementedError("Implement _parse_entity() for your backend")
 
 
-__all__ = ["TemplateIntegration"]
+__all__ = ["MyDataIntegration"]

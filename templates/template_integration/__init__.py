@@ -1,86 +1,91 @@
 """
-integrations/template_calendar/__init__.py
-───────────────────────────────────────────
-Template for creating a custom integration plugin.
+integrations/my_data/__init__.py
+─────────────────────────────────
+Factory for the custom data integration plugin.
 
-This template demonstrates the basic structure for creating any type of integration
-plugin (AI provider, calendar integration, platform bot, etc.). To adapt this template
-for your specific integration type:
+This module auto-discovers the plugin and creates instances.
 
-1. Copy this directory to a new name (e.g., integrations/my_integration).
-2. Determine your plugin type (ai, calendar, platform, or custom):
-   - For AI providers: implement AIProvider interface
-   - For calendar integrations: implement CalendarIntegration interface
-   - For platform bots: implement PlatformBot interface
-   - For other integrations: implement the appropriate interface
-3. Update the factory function name and PLUGIN_TYPE below to match your plugin type.
-4. Implement your integration class in integration.py, inheriting from the appropriate base class.
-5. Create tools and a directive as needed for your integration.
-6. Add any plugin-specific configuration to config.yaml under your plugin's section.
-7. The bot will automatically discover and load the plugin via the registry.
-
-To use this template for a specific plugin type, change:
-- PLUGIN_TYPE: set to your plugin type ('ai', 'calendar', 'platform', etc.)
-- Factory function name: match the expected factory for your type:
-   * ai: create_ai_provider
-   * calendar: create_calendar_integration
-   * platform: create_platform_bot
-   * other: choose an appropriate name
+To use:
+1. Copy to integrations/my_data/
+2. Update PLUGIN_TYPE if not "calendar" (could be "tasks", "notes", etc)
+3. Implement create_calendar_integration() or create_[type]_integration()
+4. Update config.yaml with your plugin's configuration section
 """
-from .integration import TemplateIntegration
-from .directive import TemplateDirective
 
-# Plugin type identifier for auto-discovery
-# CHANGE THIS TO MATCH YOUR PLUGIN TYPE (e.g., 'ai', 'calendar', 'platform')
-PLUGIN_TYPE = "integration"  # Placeholder - change to your actual plugin type
+from .integration import MyDataIntegration
+from .directive import MyDataDirective
+
+# Plugin type identifier (used by registry for auto-discovery)
+PLUGIN_TYPE = "calendar"  # Change to your actual type if different
 
 
-def create_integration(config: dict = None):
+def create_calendar_integration(config: dict = None) -> tuple:
     """
-    Factory function to create the template integration.
-    CHANGE THIS FUNCTION NAME TO MATCH YOUR PLUGIN TYPE:
-    - AI providers: create_ai_provider
-    - Calendar integrations: create_calendar_integration
-    - Platform bots: create_platform_bot
+    Factory function to create data integration and directive.
+
+    The registry will call this with the full config dictionary.
+    Return a tuple of (integration, directive).
 
     Args:
-        config: Configuration dictionary from config loader.
+        config: Full configuration dictionary from config.yaml
+                Expected keys:
+                - calendar.api_base (optional)
+                - calendar.database_id (optional)
+                - calendar.token (from environment variable)
+                - system_prompts.default (optional, for base prompt)
 
     Returns:
-        Plugin instance (type depends on your plugin type).
+        Tuple of (MyDataIntegration, MyDataDirective)
+
+    Raises:
+        ValueError: If required configuration is missing
     """
-    # Extract configuration (example)
-    # Adapt this section based on your plugin's configuration needs
     if config is None:
-        import os
-        # Example fallback to environment variables
-        token = os.getenv("TEMPLATE_INTEGRATION_TOKEN")
-        if not token:
-            raise ValueError("TEMPLATE_INTEGRATION_TOKEN environment variable not set")
-    else:
-        # Get config for your plugin type (adjust the key as needed)
-        plugin_config = config.get("integration", {})  # CHANGE 'integration' to your config key
-        token = plugin_config.get("token") or os.getenv("TEMPLATE_INTEGRATION_TOKEN")
-        if not token:
-            raise ValueError("TEMPLATE_INTEGRATION_TOKEN not found in config or environment variables")
+        raise ValueError("Config dictionary is required for data integration factory")
+
+    # Extract data integration configuration
+    data_config = config.get("calendar", {})  # or your config section name
+
+    # Get token (usually required)
+    token = data_config.get("token")
+    if not token:
+        raise ValueError(
+            "Authentication token not found in config['calendar']['token']. "
+            "Ensure your config.yaml has:\n"
+            "  calendar:\n"
+            "    token_env: MY_DATA_TOKEN\n"
+            "And .env has: MY_DATA_TOKEN=your_actual_token"
+        )
+
+    # Get other optional parameters
+    api_base = data_config.get("api_base")
+    database_id = data_config.get("database_id")
 
     # Create integration
-    # CHANGE THIS TO USE YOUR ACTUAL INTEGRATION CLASS
-    integration = TemplateIntegration(
+    integration = MyDataIntegration(
         token=token,
-        # Add other parameters as needed for your integration
+        api_base=api_base,
+        database_id=database_id,
     )
 
-    # Create directive (if applicable to your plugin type)
-    # Some plugin types (like AI providers) don't use directives
-    directive = TemplateDirective(integration) if integration else None
+    # Get base system prompt from config (if available)
+    base_system_prompt = None
+    if config:
+        system_prompts_config = config.get("system_prompts", {})
+        base_system_prompt = system_prompts_config.get("default")
+
+    # Create directive with integration and optional system prompt
+    directive = MyDataDirective(
+        integration=integration,
+        system_prompt=base_system_prompt,
+    )
 
     return integration, directive
 
 
 __all__ = [
-    "create_integration",
-    "TemplateIntegration",
-    "TemplateDirective",
+    "create_calendar_integration",
+    "MyDataIntegration",
+    "MyDataDirective",
     "PLUGIN_TYPE",
 ]
