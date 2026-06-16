@@ -1,12 +1,21 @@
 """
-integrations/calendar_notion/tools.py
-──────────────────────────────────────
-Calendar tools for the Notion integration.
+integrations/calendar_notion/tools.py (REFACTORED)
+──────────────────────────────────────────────────────
+Calendar tools that work with ANY DataIntegration backend.
+
+KEY CHANGE: Uses DataIntegration instead of NotionCalendarIntegration
+────────────────────────────────────────────────────────────────────
+
+Now you can use these tools with:
+- Notion
+- Google Calendar
+- iCal
+- Outlook
+- Any custom backend that implements DataIntegration
 
 Each class implements Tool from integrations.base.
-To add a new calendar action (e.g. duplicate_event), create a new
-subclass here and register it in directive.py — no other file needs
-to change.
+To add a new calendar action, create a new subclass here and register it 
+in directive.py — no other file needs to change.
 """
 from __future__ import annotations
 
@@ -14,7 +23,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
-from integrations.base import Tool, ToolResult, CalendarIntegration
+from integrations.base import Tool, ToolResult, DataIntegration, CalendarEvent
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +35,15 @@ logger = logging.getLogger(__name__)
 class BaseCalendarTool(Tool):
     """Base class for calendar tools to reduce boilerplate."""
 
-    def __init__(self, calendar: NotionCalendarIntegration) -> None:
-        # Tool base class doesn't require any arguments in __init__
+    def __init__(self, data_integration: DataIntegration) -> None:
+        """
+        Initialize with a generic DataIntegration.
+        
+        Args:
+            data_integration: Any DataIntegration backend (Notion, Google, etc.)
+        """
         super().__init__()
-        self._calendar = calendar
+        self._integration = data_integration
 
     def _resolve_date_param(self, param_value: str | None, default: str = "today") -> str | None:
         """Resolve a date parameter if it's not None."""
@@ -104,14 +118,14 @@ def _fmt_event(event) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Tools
+# Tools (now work with any DataIntegration backend)
 # ──────────────────────────────────────────────────────────────────────────────
 
 class QueryEventsTool(BaseCalendarTool):
     """Retrieve calendar events between two dates."""
 
-    def __init__(self, calendar: NotionCalendarIntegration) -> None:
-        super().__init__(calendar)
+    def __init__(self, data_integration: DataIntegration) -> None:
+        super().__init__(data_integration)
 
     @property
     def name(self) -> str:
@@ -135,7 +149,11 @@ class QueryEventsTool(BaseCalendarTool):
         if date_end < date_start:
             date_end = date_start
 
-        events = self._calendar.query_events(date_start, date_end)
+        # Use generic query interface
+        events = self._integration.query({
+            "date_start": date_start,
+            "date_end": date_end,
+        })
 
         if not events:
             return ToolResult(
@@ -156,8 +174,8 @@ class QueryEventsTool(BaseCalendarTool):
 class CreateEventTool(BaseCalendarTool):
     """Create a new calendar event."""
 
-    def __init__(self, calendar: NotionCalendarIntegration) -> None:
-        super().__init__(calendar)
+    def __init__(self, data_integration: DataIntegration) -> None:
+        super().__init__(data_integration)
 
     @property
     def name(self) -> str:
@@ -189,27 +207,33 @@ class CreateEventTool(BaseCalendarTool):
         date_start = self._resolve_date_param(date_start)
         date_end   = self._resolve_date_param(params["date_end"]) if params.get("date_end") else None
 
-        event = self._calendar.create_event(
-            title       = title,
-            date_start  = date_start,
-            date_end    = date_end,
-            time_start  = params.get("time_start"),
-            time_end    = params.get("time_end"),
-            location    = params.get("location"),
-            description = params.get("description"),
+        # Create generic CalendarEvent
+        event = CalendarEvent(
+            id="",  # Backend will assign ID
+            title=title,
+            date_start=date_start,
+            date_end=date_end,
+            time_start=params.get("time_start"),
+            time_end=params.get("time_end"),
+            location=params.get("location"),
+            description=params.get("description"),
         )
+        
+        # Use generic create interface
+        created_event = self._integration.create(event)
+        
         return ToolResult(
             success=True,
-            message=f"✅ Created: {_fmt_event(event)}",
-            data={"event": vars(event)},
+            message=f"✅ Created: {_fmt_event(created_event)}",
+            data={"event": vars(created_event)},
         )
 
 
 class UpdateEventTool(BaseCalendarTool):
     """Update an existing calendar event."""
 
-    def __init__(self, calendar: NotionCalendarIntegration) -> None:
-        super().__init__(calendar)
+    def __init__(self, data_integration: DataIntegration) -> None:
+        super().__init__(data_integration)
 
     @property
     def name(self) -> str:
@@ -222,7 +246,7 @@ class UpdateEventTool(BaseCalendarTool):
     @property
     def params(self) -> dict:
         return {
-            "event_id":    {"type": "string", "description": "Notion page ID of the event",  "required": True},
+            "event_id":    {"type": "string", "description": "Page ID of the event",  "required": True},
             "title":       {"type": "string", "description": "New title",                    "required": False},
             "date_start":  {"type": "string", "description": "New start date",               "required": False},
             "date_end":    {"type": "string", "description": "New end date",                 "required": False},
@@ -237,12 +261,20 @@ class UpdateEventTool(BaseCalendarTool):
         if not event_id:
             return ToolResult(success=False, message="❌ event_id is required.")
 
-        if params.get("date_start"):
-            params["date_start"] = self._resolve_date_param(params["date_start"])
-        if params.get("date_end"):
-            params["date_end"]   = self._resolve_date_param(params["date_end"])
+        # Resolve date params
+        updates = {}
+        for key in ["date_start", "date_end"]:
+            if params.get(key):
+                updates[key] = self._resolve_date_param(params[key])
+        
+        # Add other fields
+        for key in ["title", "time_start", "time_end", "location", "description"]:
+            if params.get(key):
+                updates[key] = params[key]
 
-        event = self._calendar.update_event(**params)
+        # Use generic update interface
+        event = self._integration.update(event_id, updates)
+        
         return ToolResult(
             success=True,
             message=f"✅ Updated: {_fmt_event(event)}",
@@ -253,8 +285,8 @@ class UpdateEventTool(BaseCalendarTool):
 class DeleteEventTool(BaseCalendarTool):
     """Delete (archive) a calendar event."""
 
-    def __init__(self, calendar: NotionCalendarIntegration) -> None:
-        super().__init__(calendar)
+    def __init__(self, data_integration: DataIntegration) -> None:
+        super().__init__(data_integration)
 
     @property
     def name(self) -> str:
@@ -267,7 +299,7 @@ class DeleteEventTool(BaseCalendarTool):
     @property
     def params(self) -> dict:
         return {
-            "event_id": {"type": "string", "description": "Notion page ID of the event to delete", "required": True},
+            "event_id": {"type": "string", "description": "Page ID of the event to delete", "required": True},
         }
 
     def execute(self, params: dict[str, Any]) -> ToolResult:
@@ -275,5 +307,7 @@ class DeleteEventTool(BaseCalendarTool):
         if not event_id:
             return ToolResult(success=False, message="❌ event_id is required.")
 
-        self._calendar.delete_event(event_id)
+        # Use generic delete interface
+        self._integration.delete(event_id)
+        
         return ToolResult(success=True, message=f"🗑️ Deleted event {event_id}.")

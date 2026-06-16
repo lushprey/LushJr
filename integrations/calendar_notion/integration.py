@@ -1,7 +1,13 @@
 """
-integrations/calendar_notion/integration.py
-────────────────────────────────────────────
-CalendarIntegration backed by a Notion database.
+integrations/calendar_notion/integration.py (REFACTORED)
+─────────────────────────────────────────────────────────
+DataIntegration backed by a Notion database.
+
+KEY CHANGE: Implements DataIntegration (generic) instead of CalendarIntegration
+──────────────────────────────────────────────────────────────────────────────
+
+This makes it work with ANY type of resource, not just calendar events.
+But it still supports calendar-specific operations through the metadata dict.
 
 Notion stores datetime as ISO-8601 strings; we expose them as plain
 dates ("YYYY-MM-DD") and times ("HH:MM") so the rest of the code stays
@@ -15,14 +21,152 @@ from typing import Any
 
 from notion_client import Client
 
-from integrations.base import BaseIntegration, CalendarEvent
+from integrations.base import BaseIntegration, DataIntegration, DataEntity, CalendarEvent
 
 logger = logging.getLogger(__name__)
 
 
-class NotionCalendarIntegration(BaseIntegration):
+class NotionDataIntegration(BaseIntegration, DataIntegration):
     """
-    Reads and writes events in a Notion database.
+    Generic data backend backed by a Notion database.
+    
+    Can store any type of resource (calendar events, tasks, notes, etc.)
+    
+    For calendar events specifically, use NotionCalendarIntegration below.
+
+    Parameters
+    ----------
+    token          : Notion integration token (NOTION_TOKEN).
+    database_id    : Target database ID (DATABASE_ID).
+    prop_*         : Notion property names — change these to match your schema.
+    """
+
+    def __init__(
+        self,
+        token:           str,
+        database_id:     str,
+        prop_id:         str = "ID",
+        prop_title:      str = "Nombre",
+        prop_metadata:   str = "Metadata",
+    ) -> None:
+        super().__init__()
+        self._notion      = Client(auth=token)
+        self._db_id       = database_id
+        self._p_id        = prop_id
+        self._p_title     = prop_title
+        self._p_metadata  = prop_metadata
+        self._props       = self._fetch_db_props()
+
+    # ──────────────────────────────────────────────────────────────────────
+    # DataIntegration interface
+    # ──────────────────────────────────────────────────────────────────────
+
+    def query(self, filters: dict[str, Any]) -> list[DataEntity]:
+        """
+        Query entities from Notion.
+        
+        Filters are flexible — subclasses decide how to interpret them.
+        For calendar: {"date_start": "2025-01-01", "date_end": "2025-12-31"}
+        """
+        # Base implementation: fetch all records
+        # Override in subclasses to filter based on specific criteria
+        response = self._notion.databases.query(
+            database_id=self._db_id,
+            sorts=[{"property": self._p_title, "direction": "ascending"}],
+        )
+        return [self._page_to_entity(p) for p in response.get("results", [])]
+
+    def create(self, entity: DataEntity) -> DataEntity:
+        """Create a new entity in Notion."""
+        page = self._notion.pages.create(
+            parent={"database_id": self._db_id},
+            properties=self._build_props(entity),
+        )
+        return self._page_to_entity(page)
+
+    def update(self, entity_id: str, updates: dict[str, Any]) -> DataEntity:
+        """Update an entity in Notion."""
+        current = self._page_to_entity(self._notion.pages.retrieve(page_id=entity_id))
+        
+        # Merge updates with current
+        merged_metadata = {**current.metadata, **updates}
+        merged = DataEntity(
+            id=current.id,
+            title=updates.get("title", current.title),
+            metadata=merged_metadata,
+        )
+        
+        page = self._notion.pages.update(
+            page_id=entity_id,
+            properties=self._build_props(merged),
+        )
+        return self._page_to_entity(page)
+
+    def delete(self, entity_id: str) -> None:
+        """Archive the Notion page (equivalent to deletion)."""
+        self._notion.pages.update(page_id=entity_id, archived=True)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Private helpers
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _build_props(self, entity: DataEntity) -> dict[str, Any]:
+        """Build the Notion properties payload for create/update calls."""
+        props: dict[str, Any] = {
+            self._p_title: {"title": [{"text": {"content": entity.title}}]},
+        }
+        
+        if entity.metadata and self._p_metadata in self._props:
+            import json
+            props[self._p_metadata] = {
+                "rich_text": [{"text": {"content": json.dumps(entity.metadata)}}]
+            }
+        
+        return props
+
+    def _page_to_entity(self, page: dict) -> DataEntity:
+        """Convert a raw Notion page dict into a DataEntity."""
+        props = page.get("properties", {})
+
+        title_parts = props.get(self._p_title, {}).get("title", [])
+        title       = title_parts[0]["plain_text"] if title_parts else "(no title)"
+
+        # Parse metadata if present
+        metadata = {}
+        if self._p_metadata in props:
+            meta_parts = props.get(self._p_metadata, {}).get("rich_text", [])
+            if meta_parts:
+                try:
+                    import json
+                    metadata = json.loads(meta_parts[0]["plain_text"])
+                except Exception:
+                    metadata = {}
+
+        return DataEntity(
+            id=page.get("id", ""),
+            title=title,
+            metadata=metadata,
+        )
+
+    def _fetch_db_props(self) -> set[str]:
+        """Load available property names from the Notion database."""
+        try:
+            db = self._notion.databases.retrieve(self._db_id)
+            return set(db.get("properties", {}).keys())
+        except Exception as exc:
+            logger.warning("Could not load database schema: %s", exc)
+            return set()
+
+
+class NotionCalendarIntegration(NotionDataIntegration):
+    """
+    Calendar-specific integration backed by Notion.
+    
+    Extends NotionDataIntegration to provide calendar-specific methods
+    while still implementing DataIntegration under the hood.
+
+    For calendar events specifically, use this class.
+    For other data types, use NotionDataIntegration directly.
 
     Parameters
     ----------
@@ -41,20 +185,22 @@ class NotionCalendarIntegration(BaseIntegration):
         prop_location:   str = "Lugar",
         prop_description:str = "Descripción",
     ) -> None:
-        self._notion      = Client(auth=token)
-        self._db_id       = database_id
-        self._p_title     = prop_title
+        super().__init__(
+            token=token,
+            database_id=database_id,
+            prop_title=prop_title,
+        )
         self._p_date      = prop_date
         self._p_time      = prop_time
         self._p_location  = prop_location
         self._p_desc      = prop_description
-        self._props       = self._fetch_db_props()
 
     # ──────────────────────────────────────────────────────────────────────
-    # CalendarIntegration interface
+    # Calendar-specific interface (for backwards compatibility)
     # ──────────────────────────────────────────────────────────────────────
 
     def query_events(self, date_start: str, date_end: str) -> list[CalendarEvent]:
+        """Query calendar events between two dates."""
         response = self._notion.databases.query(
             database_id=self._db_id,
             filter={
@@ -65,7 +211,7 @@ class NotionCalendarIntegration(BaseIntegration):
             },
             sorts=[{"property": self._p_date, "direction": "ascending"}],
         )
-        return [self._page_to_event(p) for p in response.get("results", [])]
+        return [self._page_to_calendar_event(p) for p in response.get("results", [])]
 
     def create_event(
         self,
@@ -77,13 +223,14 @@ class NotionCalendarIntegration(BaseIntegration):
         location:    str | None = None,
         description: str | None = None,
     ) -> CalendarEvent:
+        """Create a new calendar event."""
         page = self._notion.pages.create(
             parent={"database_id": self._db_id},
-            properties=self._build_props(
+            properties=self._build_calendar_props(
                 title, date_start, date_end, time_start, time_end, location, description
             ),
         )
-        return self._page_to_event(page)
+        return self._page_to_calendar_event(page)
 
     def update_event(
         self,
@@ -96,10 +243,11 @@ class NotionCalendarIntegration(BaseIntegration):
         location:    str | None = None,
         description: str | None = None,
     ) -> CalendarEvent:
-        current = self._page_to_event(self._notion.pages.retrieve(page_id=event_id))
+        """Update an existing calendar event."""
+        current = self._page_to_calendar_event(self._notion.pages.retrieve(page_id=event_id))
         page = self._notion.pages.update(
             page_id=event_id,
-            properties=self._build_props(
+            properties=self._build_calendar_props(
                 title       or current.title,
                 date_start  or current.date_start,
                 date_end    or current.date_end,
@@ -109,17 +257,33 @@ class NotionCalendarIntegration(BaseIntegration):
                 description or current.description,
             ),
         )
-        return self._page_to_event(page)
+        return self._page_to_calendar_event(page)
 
     def delete_event(self, event_id: str) -> None:
         """Archive the Notion page (equivalent to deletion)."""
         self._notion.pages.update(page_id=event_id, archived=True)
 
     # ──────────────────────────────────────────────────────────────────────
-    # Private helpers
+    # Override DataIntegration.query for calendar-specific filtering
     # ──────────────────────────────────────────────────────────────────────
 
-    def _build_props(
+    def query(self, filters: dict[str, Any]) -> list[CalendarEvent]:
+        """
+        Override to support calendar-specific filters.
+        
+        Expected filters:
+        - date_start: str (ISO-8601)
+        - date_end: str (ISO-8601)
+        """
+        date_start = filters.get("date_start", "1900-01-01")
+        date_end = filters.get("date_end", "2099-12-31")
+        return self.query_events(date_start, date_end)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Private helpers for calendar operations
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _build_calendar_props(
         self,
         title:       str,
         date_start:  str,
@@ -157,7 +321,7 @@ class NotionCalendarIntegration(BaseIntegration):
 
         return props
 
-    def _page_to_event(self, page: dict) -> CalendarEvent:
+    def _page_to_calendar_event(self, page: dict) -> CalendarEvent:
         """Convert a raw Notion page dict into a CalendarEvent."""
         props = page.get("properties", {})
 
@@ -193,11 +357,5 @@ class NotionCalendarIntegration(BaseIntegration):
             return date_part, time_part[:5]
         return value, None
 
-    def _fetch_db_props(self) -> set[str]:
-        """Load available property names from the Notion database."""
-        try:
-            db = self._notion.databases.retrieve(self._db_id)
-            return set(db.get("properties", {}).keys())
-        except Exception as exc:
-            logger.warning("Could not load database schema: %s", exc)
-            return set()
+
+__all__ = ["NotionDataIntegration", "NotionCalendarIntegration"]

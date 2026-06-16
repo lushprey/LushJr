@@ -1,24 +1,29 @@
 """
-integrations/base.py
-────────────────────
+integrations/base.py (REFACTORED)
+────────────────────────────────────
 Abstract interfaces and base implementations for the LushJr plugin system.
+
+KEY CHANGE: CalendarIntegration → DataIntegration (generic)
+────────────────────────────────────────────────────────────
+
+Now supports ANY backend type:
+- Calendar (Notion, Google Calendar, iCal)
+- Tasks (Asana, Todoist)
+- Notes (Obsidian, Notion)
+- CRM (Salesforce, HubSpot)
+- Custom data sources
 
 This file contains:
 1. Abstract interfaces that define contracts for all plugin types
 2. Optional base implementations that provide common functionality
 
 Plugin types:
-  - AIProvider    → AI inference backend (Nvidia, OpenAI, Anthropic…)
-  - CalendarIntegration → Calendar backend (Notion, Google, iCal…)
+  - AIProvider    → AI inference backend
+  - DataIntegration → Generic data backend (calendar, tasks, notes, CRM, etc.)
+  - CalendarIntegration → Calendar-specific adapter (backwards compatible)
   - Directive     → Groups tools + system prompt for a use-case
   - Tool          → A single action the bot can perform
   - PlatformBot   → Messaging platform (Telegram, Discord, WhatsApp…)
-
-Base implementations (provided as conveniences):
-  - BaseAIProvider    → HTTP client setup for OpenAI-compatible APIs
-  - BaseIntegration   → Base class for all integration types
-  - BasePlatformBot   → Simple run loop for platform bots
-  - BaseDirective     → Configurable system prompt for directives
 """
 from __future__ import annotations
 
@@ -38,7 +43,7 @@ class BaseIntegration(ABC):
     """Base class for all integrations in the LushJr bot system.
 
     This provides a common foundation for all integration types (AI providers,
-    calendar integrations, platform bots, etc.) to ensure consistency and
+    data integrations, platform bots, etc.) to ensure consistency and
     reduce boilerplate code.
     """
 
@@ -70,6 +75,229 @@ class BaseHttpClient(BaseIntegration):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Generic Data Entity
+# ──────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class DataEntity:
+    """
+    Generic data entity that can represent any type of resource.
+    
+    Use this as a base for any backend you want to support:
+    - Calendar events
+    - Tasks
+    - Notes
+    - CRM contacts
+    - Database records
+    - etc.
+    
+    The `metadata` dict is flexible — use it to store any backend-specific fields.
+    """
+    id:          str
+    title:       str
+    metadata:    dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class CalendarEvent(DataEntity):
+    """
+    Calendar-specific entity. Extends DataEntity with calendar fields.
+    
+    This maintains backwards compatibility with existing code while
+    allowing the underlying integration to be completely generic.
+    """
+    date_start:  str | None = None           # ISO-8601 "YYYY-MM-DD"
+    date_end:    str | None = None
+    time_start:  str | None = None           # "HH:MM"
+    time_end:    str | None = None           # "HH:MM"
+    location:    str | None = None
+    description: str | None = None
+    
+    def __post_init__(self):
+        """Populate metadata from calendar-specific fields."""
+        self.metadata = {
+            "date_start": self.date_start,
+            "date_end": self.date_end,
+            "time_start": self.time_start,
+            "time_end": self.time_end,
+            "location": self.location,
+            "description": self.description,
+        }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Generic Data Integration Interface
+# ──────────────────────────────────────────────────────────────────────────────
+
+class DataIntegration(ABC):
+    """
+    Generic data backend for reading and writing resources.
+    
+    This is completely agnostic to the data type. Use it for:
+    - Calendar backends (Notion, Google Calendar, iCal, etc.)
+    - Task managers (Asana, Todoist, etc.)
+    - Note-taking (Obsidian, Notion, etc.)
+    - CRM systems
+    - Databases
+    - Custom backends
+    
+    Each subclass decides what fields it needs and how to interpret them.
+    The filters and updates dicts are plugin-specific.
+    """
+
+    @abstractmethod
+    def query(self, filters: dict[str, Any]) -> list[DataEntity]:
+        """
+        Query entities matching the given filters.
+        
+        Filters are plugin-specific. Examples:
+        - Calendar: {"date_start": "2025-01-01", "date_end": "2025-12-31"}
+        - Tasks: {"status": "open", "assigned_to": "john"}
+        - Notes: {"tag": "work", "created_after": "2025-01-01"}
+        
+        Args:
+            filters: Dictionary of filter criteria (backend-specific)
+        
+        Returns:
+            List of DataEntity objects matching the filters
+        """
+        ...
+
+    @abstractmethod
+    def create(self, entity: DataEntity) -> DataEntity:
+        """
+        Create a new entity and return it with assigned ID.
+        
+        Args:
+            entity: The entity to create (id may be empty)
+        
+        Returns:
+            The created entity with id populated
+        """
+        ...
+
+    @abstractmethod
+    def update(self, entity_id: str, updates: dict[str, Any]) -> DataEntity:
+        """
+        Update an entity and return the updated version.
+        
+        Args:
+            entity_id: ID of the entity to update
+            updates: Dictionary of fields to update (backend-specific)
+        
+        Returns:
+            The updated entity
+        """
+        ...
+
+    @abstractmethod
+    def delete(self, entity_id: str) -> None:
+        """
+        Delete/Archive an entity.
+        
+        Args:
+            entity_id: ID of the entity to delete
+        """
+        ...
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Calendar-specific adapter (keeps backwards compatibility)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class CalendarIntegration(DataIntegration):
+    """
+    Adapter interface for calendar-specific operations.
+    
+    This is a convenience layer on top of DataIntegration that provides
+    calendar-specific method signatures. Subclasses can implement either:
+    
+    1. CalendarIntegration (calendar-specific, recommended for calendar backends)
+    2. DataIntegration directly (generic, for non-calendar use cases)
+    
+    The adapter handles conversion between calendar-specific methods and
+    the generic DataIntegration interface.
+    """
+
+    @abstractmethod
+    def query_events(self, date_start: str, date_end: str) -> list[CalendarEvent]:
+        """Query events within a date range (inclusive)."""
+        ...
+
+    @abstractmethod
+    def create_event(
+        self,
+        title: str,
+        date_start: str,
+        date_end: str | None = None,
+        time_start: str | None = None,
+        time_end: str | None = None,
+        location: str | None = None,
+        description: str | None = None,
+    ) -> CalendarEvent:
+        """Create a new calendar event."""
+        ...
+
+    @abstractmethod
+    def update_event(
+        self,
+        event_id: str,
+        title: str | None = None,
+        date_start: str | None = None,
+        date_end: str | None = None,
+        time_start: str | None = None,
+        time_end: str | None = None,
+        location: str | None = None,
+        description: str | None = None,
+    ) -> CalendarEvent:
+        """Update an existing calendar event."""
+        ...
+
+    @abstractmethod
+    def delete_event(self, event_id: str) -> None:
+        """Delete/Archive a calendar event."""
+        ...
+    
+    # ────────────────────────────────────────────────────────────────────
+    # Default DataIntegration implementations (delegates to calendar methods)
+    # ────────────────────────────────────────────────────────────────────
+    
+    def query(self, filters: dict[str, Any]) -> list[DataEntity]:
+        """
+        Convert generic filters to calendar-specific query.
+        
+        Expected filters:
+        - date_start: str (ISO-8601)
+        - date_end: str (ISO-8601)
+        """
+        date_start = filters.get("date_start", "1900-01-01")
+        date_end = filters.get("date_end", "2099-12-31")
+        return self.query_events(date_start, date_end)
+    
+    def create(self, entity: DataEntity) -> DataEntity:
+        """Convert generic entity to calendar event."""
+        if isinstance(entity, CalendarEvent):
+            return self.create_event(
+                title=entity.title,
+                date_start=entity.date_start,
+                date_end=entity.date_end,
+                time_start=entity.time_start,
+                time_end=entity.time_end,
+                location=entity.location,
+                description=entity.description,
+            )
+        raise ValueError("Expected CalendarEvent for CalendarIntegration.create()")
+    
+    def update(self, entity_id: str, updates: dict[str, Any]) -> DataEntity:
+        """Convert generic updates to calendar-specific update."""
+        return self.update_event(entity_id, **updates)
+    
+    def delete(self, entity_id: str) -> None:
+        """Delete via calendar-specific method."""
+        self.delete_event(entity_id)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Tool
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -95,7 +323,7 @@ class Tool(ABC):
             return ToolResult(success=True, message=f"Email sent to {params['to']}")
     """
 
-    # ── Required class attributes ─────────────────────
+    # ── Required class attributes ─────────────────────────
 
     @property
     @abstractmethod
@@ -186,75 +414,6 @@ class BaseDirective(Directive):
 
     def system_prompt(self) -> str:
         return self._system_prompt
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Calendar Event (Platform-agnostic)
-# ──────────────────────────────────────────────────────────────────────────────
-
-@dataclass
-class CalendarEvent:
-    """Platform-agnostic calendar event."""
-    id:          str
-    title:       str
-    date_start:  str                  # ISO-8601  "YYYY-MM-DD"
-    date_end:    str | None = None
-    time_start:  str | None = None    # "HH:MM"
-    time_end:    str | None = None    # "HH:MM"
-    location:    str | None = None
-    description: str | None = None
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Calendar Integration Interface
-# ──────────────────────────────────────────────────────────────────────────────
-
-class CalendarIntegration(ABC):
-    """
-    Calendar integration backend for reading and writing calendar events.
-
-    Implement this to swap calendar backends (Notion, Google Calendar, iCal, etc.)
-    without changing the rest of the bot's logic.
-    """
-
-    @abstractmethod
-    def query_events(self, date_start: str, date_end: str) -> list[CalendarEvent]:
-        """Query events within a date range (inclusive)."""
-        ...
-
-    @abstractmethod
-    def create_event(
-        self,
-        title: str,
-        date_start: str,
-        date_end: str | None = None,
-        time_start: str | None = None,
-        time_end: str | None = None,
-        location: str | None = None,
-        description: str | None = None,
-    ) -> CalendarEvent:
-        """Create a new calendar event."""
-        ...
-
-    @abstractmethod
-    def update_event(
-        self,
-        event_id: str,
-        title: str | None = None,
-        date_start: str | None = None,
-        date_end: str | None = None,
-        time_start: str | None = None,
-        time_end: str | None = None,
-        location: str | None = None,
-        description: str | None = None,
-    ) -> CalendarEvent:
-        """Update an existing calendar event."""
-        ...
-
-    @abstractmethod
-    def delete_event(self, event_id: str) -> None:
-        """Delete/Archive a calendar event."""
-        ...
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -350,7 +509,7 @@ class PlatformBot(ABC):
 
 class BasePlatformBot(BaseIntegration, PlatformBot):
     """Base implementation for PlatformBot that provides a simple run loop."""
-    def __init__(self, processor: MessageProcessor):
+    def __init__(self, processor: "MessageProcessor"):
         super().__init__()
         self.processor = processor
 

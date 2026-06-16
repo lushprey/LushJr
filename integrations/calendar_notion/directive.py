@@ -1,7 +1,17 @@
 """
-integrations/calendar_notion/directive.py
-──────────────────────────────────────────
-Directive that wires the Notion calendar tools together.
+integrations/calendar_notion/directive.py (REFACTORED)
+──────────────────────────────────────────────────────────
+Directive that wires calendar tools to any DataIntegration backend.
+
+KEY CHANGE: Uses DataIntegration instead of NotionCalendarIntegration
+────────────────────────────────────────────────────────────────────
+
+Now compatible with:
+- Notion
+- Google Calendar
+- iCal
+- Outlook
+- Any custom backend
 
 Customisation
 -------------
@@ -12,8 +22,7 @@ Customisation
 """
 from __future__ import annotations
 
-from integrations.base import BaseDirective, Directive, Tool
-from .integration import NotionCalendarIntegration
+from integrations.base import BaseDirective, Directive, Tool, DataIntegration
 from .tools import (
     CreateEventTool,
     DeleteEventTool,
@@ -48,25 +57,30 @@ Guidelines:
 class CalendarDirective(BaseDirective):
     """
     Groups all calendar tools and the system prompt.
+    
+    Works with ANY DataIntegration backend.
 
     Parameters
     ----------
-    calendar      : NotionCalendarIntegration
-    system_prompt : Override the default prompt to change language, persona, etc.
-    extra_tools   : Additional Tool instances to register alongside the defaults.
+    data_integration : DataIntegration
+        Any backend that implements DataIntegration (Notion, Google Calendar, etc.)
+    system_prompt : str | None
+        Override the default prompt to change language, persona, etc.
+    extra_tools : list[Tool] | None
+        Additional Tool instances to register alongside the defaults.
     """
 
     def __init__(
         self,
-        calendar:      CalendarIntegration,
+        data_integration: DataIntegration,
         system_prompt: str | None = None,
-        extra_tools:   list[Tool] | None = None,
+        extra_tools: list[Tool] | None = None,
     ) -> None:
         tools = [
-            QueryEventsTool(calendar),
-            CreateEventTool(calendar),
-            UpdateEventTool(calendar),
-            DeleteEventTool(calendar),
+            QueryEventsTool(data_integration),
+            CreateEventTool(data_integration),
+            UpdateEventTool(data_integration),
+            DeleteEventTool(data_integration),
         ]
         if extra_tools:
             tools.extend(extra_tools)
@@ -79,3 +93,6 @@ class CalendarDirective(BaseDirective):
             base_system_prompt = DEFAULT_SYSTEM_PROMPT
 
         super().__init__(tools=tools, system_prompt=base_system_prompt)
+
+
+__all__ = ["CalendarDirective", "DEFAULT_SYSTEM_PROMPT"]
